@@ -1,0 +1,16 @@
+{
+  "model": "sonnet",
+  "hooks": {
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/.claude/hooks/repeat_error.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
