@@ -50,6 +50,11 @@ p { margin: 0; }
 .small { font-size: 0.85rem; }
 
 header.top { display: grid; gap: 6px; }
+.sync { justify-self: start; display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--muted); }
+.sync::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--later); }
+.sync[data-s="synced"]::before { background: var(--pounamu); }
+.sync[data-s="saving"]::before, .sync[data-s="loading"]::before { background: var(--kowhai); }
+.sync[data-s="error"]::before, .sync[data-s="readonly"]::before { background: var(--now); }
 .banner { background: var(--soon-bg); color: var(--ink); border-radius: 10px; padding: 10px 12px; font-size: 0.88rem; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .banner button { flex: none; }
 
@@ -130,6 +135,7 @@ nav.tabs a[aria-current="page"] { color: var(--pounamu); }
   <header class="top">
     <span class="eyebrow">Kiwiwealth · NZ family planner</span>
     <h1 id="hh">Our plan</h1>
+    <span class="sync" id="sync" data-s="local" role="status">Saved on this phone</span>
     <div class="banner" id="exampleBanner" hidden>
       <span>These are <strong>example numbers</strong>. Enter yours in Details.</span>
       <button class="ghost" type="button" data-go="details">Enter ours</button>
@@ -141,7 +147,7 @@ nav.tabs a[aria-current="page"] { color: var(--pounamu); }
   <main id="view-budget" style="display:grid;gap:16px" hidden></main>
   <main id="view-future" style="display:grid;gap:16px" hidden></main>
 
-  <p class="disclaimer">General information for your own household. It isn't regulated financial advice. It uses simplified NZ tax rules (checked late 2026) and assumed returns that aren't guaranteed. Your numbers are saved only in this browser on this device.</p>
+  <p class="disclaimer">General information for your own household. It isn't regulated financial advice. It uses simplified NZ tax rules (checked late 2026) and assumed returns that aren't guaranteed. Your numbers sync between the phones of everyone you share this page with as Contributor or Editor. People with view-only access can't see them.</p>
 </div>
 
 <nav class="tabs" aria-label="Sections">
@@ -459,7 +465,51 @@ const KEY = "kiwiwealth.v1";
 const clone = o => JSON.parse(JSON.stringify(o));
 let state, csvBudget = null;
 try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); state = s?.profile || clone(EXAMPLE); csvBudget = s?.csv || null; } catch { state = clone(EXAMPLE); }
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify({ profile: state, csv: csvBudget })); } catch {} };
+const cacheLocal = () => { try { localStorage.setItem(KEY, JSON.stringify({ profile: state, csv: csvBudget })); } catch {} };
+
+/* ===== Sync: one shared household document, live between phones ===== */
+const SYNC_TEXT = { local: "Saved on this phone only", loading: "Connecting…", synced: "Synced across your phones", saving: "Saving…", offline: "Can't reach sync yet; changes are kept on this phone", readonly: "View only: you can't change these numbers", error: "" };
+function setSync(st, text) { const e = document.getElementById("sync"); if (!e) return; e.dataset.s = st; e.textContent = text || SYNC_TEXT[st]; }
+let hhDoc = null, canWrite = true, lastSent = null, writing = false, queued = false, saveTimer = null, firstSnap = false;
+const payload = () => ({ profile: state, csv: csvBudget });
+async function flush() {
+  if (!hhDoc || !canWrite) return;
+  if (writing) { queued = true; return; }
+  writing = true; setSync("saving");
+  const body = payload(), json = JSON.stringify(body);
+  try { await hhDoc.set({ ...body, updatedAt: new Date().toISOString() }); lastSent = json; setSync("synced"); }
+  catch (e) {
+    if (e?.code === "invalid_argument") { canWrite = false; setSync("readonly"); }
+    else if (e?.code === "quota_exceeded") setSync("error", "Sync storage is full; changes are kept on this phone");
+    else setSync("offline");
+  } finally { writing = false; if (queued) { queued = false; flush(); } }
+}
+function save() { cacheLocal(); if (!hhDoc || !canWrite) return; clearTimeout(saveTimer); setSync("saving"); saveTimer = setTimeout(flush, 700); }
+async function startSync() {
+  let db = null;
+  try { db = await window.claude?.use?.("db"); } catch {}
+  if (!db) { setSync("local"); return; }
+  try { const u = await window.claude.use("user"); if ((await u?.can("data.write")) === false) { canWrite = false; } } catch {}
+  hhDoc = db.doc("household/main");
+  setSync("loading");
+  const timer = setTimeout(() => { if (!firstSnap) setSync("offline"); }, 10000);
+  hhDoc.onSnapshot(snap => {
+    if (snap.metadata.fromCache && !snap.exists) return; // wait for the store's answer
+    if (!snap.metadata.fromCache) { firstSnap = true; clearTimeout(timer); }
+    if (snap.exists) {
+      const d = snap.data(), json = JSON.stringify({ profile: d.profile, csv: d.csv ?? null });
+      if (json !== JSON.stringify(payload()) && json !== lastSent && d.profile?.people) {
+        state = clone(d.profile); csvBudget = d.csv ? clone(d.csv) : null; cacheLocal();
+        const editing = el("view-details").contains(document.activeElement) && !el("view-details").hidden;
+        refresh(!editing);
+      }
+      if (!snap.metadata.hasPendingWrites && !writing) setSync(canWrite ? "synced" : "readonly");
+    } else if (!snap.metadata.fromCache) {
+      // Nothing shared yet: upload what this phone has, unless it's only the example.
+      if (!state.example && canWrite) flush(); else setSync(canWrite ? "synced" : "readonly", canWrite ? "Ready to sync. Enter your numbers in Details" : SYNC_TEXT.readonly);
+    }
+  }, err => { clearTimeout(timer); setSync(err?.code === "revoked" ? "readonly" : "offline"); });
+}
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const el = id => document.getElementById(id);
 
@@ -609,8 +659,8 @@ function renderDetails() {
       ${input("prefs", ["target", "Retirement income/yr (today's $)", "money"], S.prefs)}
       ${input("prefs", ["maxShare", "Max in one company %", "pct"], S.prefs)}
       ${input("prefs", ["shares", "Include a share satellite", "bool"], S.prefs, true)}</div></fieldset>
-    <fieldset><legend>Move to another phone</legend>
-      <p class="small muted">Copy your data here, then paste it on the other phone (for example your partner's).</p>
+    <fieldset><legend>Back up or restore</legend>
+      <p class="small muted">Changes sync automatically. Copy the data for a backup, or paste a backup to restore it on every phone.</p>
       <div class="row"><button type="button" id="copyData">Copy my data</button><button class="ghost" type="button" id="resetEx">Start again with example</button></div>
       <textarea id="pasteBox" rows="3" placeholder="Paste data here to load it"></textarea>
       <p id="moveMsg" class="small" role="status"></p></fieldset>`;
@@ -628,8 +678,11 @@ el("view-details").addEventListener("click", async e => {
   const t = e.target;
   if (t.dataset.addto) { state[t.dataset.addto].push(clone(BLANK[t.dataset.blank])); changed(true); }
   if (t.dataset.del) { const [key, i] = t.dataset.del.split("."); if (key === "people" && state.people.length === 1) return; state[key].splice(+i, 1); changed(true); }
-  if (t.id === "copyData") { const text = JSON.stringify(state); try { await navigator.clipboard.writeText(text); el("moveMsg").textContent = "Copied. Paste it on the other phone."; } catch { const b = el("pasteBox"); b.value = text; b.select(); el("moveMsg").textContent = "Selected below. Copy it manually."; } }
-  if (t.id === "resetEx") { state = clone(EXAMPLE); csvBudget = null; save(); refresh(true); }
+  if (t.id === "copyData") { const text = JSON.stringify(state); try { await navigator.clipboard.writeText(text); el("moveMsg").textContent = "Copied."; } catch { const b = el("pasteBox"); b.value = text; b.select(); el("moveMsg").textContent = "Selected below. Copy it manually."; } }
+  if (t.id === "resetEx") {
+    if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "Tap again: this clears it on every phone"; setTimeout(() => { if (t.isConnected) { t.dataset.armed = ""; t.textContent = "Start again with example"; } }, 4000); return; }
+    state = clone(EXAMPLE); csvBudget = null; save(); refresh(true);
+  }
 });
 el("view-details").addEventListener("paste", e => {
   if (e.target.id !== "pasteBox") return;
@@ -653,5 +706,5 @@ function route() {
 }
 document.addEventListener("click", e => { const g = e.target.closest("[data-go]"); if (g) location.hash = g.dataset.go; });
 window.addEventListener("hashchange", route);
-refresh(true); route();
+refresh(true); route(); startSync();
 </script>

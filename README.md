@@ -43,7 +43,7 @@ Rows categorised as `Transfer` are left out. Give that category to moves between
 
 ### Phone app
 
-`app/kiwiwealth.html` is the same engine ported to a single offline page for phones. It has tabs for the plan, future projections, budget CSV import and details. Your numbers stay in that phone's browser storage. Use "Copy my data" to move them to another phone. Keep `advice.py` and the page's engine script in step when changing rules.
+`app/kiwiwealth.html` is the same engine ported to a single offline page for phones. It has tabs for the plan, future projections, budget CSV import and details. It syncs one shared household record between everyone the page is shared with as Contributor or Editor (view-only people cannot read it), and keeps a local copy so it still works offline. Keep `advice.py` and the page's engine script in step when changing rules.
 
 ### Layout
 
