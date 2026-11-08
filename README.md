@@ -41,6 +41,10 @@ Try it with the examples: `python -m kiwiwealth report examples/profile.example.
 column names, map them with `--map '{"date":"When","amount":"Value","category":"Group"}'`.
 Rows categorised as `Transfer` are left out. Give that category to moves between your own accounts, automatic investment contributions, and (if you also import the card CSV) credit-card repayments.
 
+### Phone app
+
+`app/kiwiwealth.html` is the same engine ported to a single offline page for phones. It has tabs for the plan, future projections, budget CSV import and details. Your numbers stay in that phone's browser storage. Use "Copy my data" to move them to another phone. Keep `advice.py` and the page's engine script in step when changing rules.
+
 ### Layout
 
 | File | What it does |

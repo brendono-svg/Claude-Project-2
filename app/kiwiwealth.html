@@ -1,0 +1,657 @@
+<title>Kiwiwealth Planner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: one narrow column like a banking app; summary first, then a ranked action list; bottom tab bar. */
+:root {
+  --bg: #f3f6f4;        /* cool paper with a pounamu tint */
+  --surface: #ffffff;
+  --ink: #14211c;
+  --muted: #5a6b64;
+  --line: #d5dfda;
+  --pounamu: #1d5c4b;   /* greenstone: primary */
+  --pounamu-soft: #e0ece7;
+  --kowhai: #c98a0b;    /* kōwhai yellow: accent, used sparingly */
+  --now: #b3412e; --soon: #a8700a; --worth: #1d5c4b; --later: #6a7a73;
+  --now-bg: #f7e4df; --soon-bg: #f6ecd6; --worth-bg: #e0ece7; --later-bg: #e8ecea;
+  --hero: #1d5c4b; --hero-ink: #f3f6f4; --hero-ks: #9fd9c4; --hero-inv: #f3f6f4; --hero-cash: #5c9a88;
+  --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1714; --surface: #17221e; --ink: #e4ece8; --muted: #9aaba4; --line: #2a3832;
+  --pounamu: #6cc4a6; --pounamu-soft: #1d3029; --kowhai: #f0b93a;
+  --now: #f08a75; --soon: #e9b44c; --worth: #6cc4a6; --later: #9aaba4;
+  --now-bg: #3a211b; --soon-bg: #362b14; --worth-bg: #1d3029; --later-bg: #232d29;
+  --hero: #1b3d33; --hero-ink: #e4ece8; --hero-cash: #4f8a79;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f1714; --surface: #17221e; --ink: #e4ece8; --muted: #9aaba4; --line: #2a3832;
+  --pounamu: #6cc4a6; --pounamu-soft: #1d3029; --kowhai: #f0b93a;
+  --now: #f08a75; --soon: #e9b44c; --worth: #6cc4a6; --later: #9aaba4;
+  --now-bg: #3a211b; --soon-bg: #362b14; --worth-bg: #1d3029; --later-bg: #232d29;
+  --hero: #1b3d33; --hero-ink: #e4ece8; --hero-cash: #4f8a79;
+  color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap { max-width: 640px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 110px; display: grid; gap: 22px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: 1.7rem; font-weight: 700; }
+h2 { font-size: 1.2rem; font-weight: 700; }
+h3 { font-size: 1rem; font-weight: 500; }
+p { margin: 0; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.eyebrow { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.small { font-size: 0.85rem; }
+
+header.top { display: grid; gap: 6px; }
+.banner { background: var(--soon-bg); color: var(--ink); border-radius: 10px; padding: 10px 12px; font-size: 0.88rem; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.banner button { flex: none; }
+
+/* Net worth block */
+.worth { background: var(--hero); color: var(--hero-ink); border-radius: 16px; padding: 18px; display: grid; gap: 14px; }
+.worth .big { font-family: var(--mono); font-size: 2.1rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.worth .eyebrow { color: inherit; opacity: 0.8; }
+.split { display: grid; gap: 6px; }
+.bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: rgba(255,255,255,0.18); }
+.bar span { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 2px; min-width: 0; }
+.stat .v { font-family: var(--mono); font-size: 1.1rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stat .k { font-size: 0.75rem; color: var(--muted); }
+
+/* Action plan */
+.group { display: grid; gap: 10px; }
+.group-head { display: flex; align-items: baseline; gap: 8px; }
+.pill { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 9px; border-radius: 999px; }
+.p1 { color: var(--now); background: var(--now-bg); } .p2 { color: var(--soon); background: var(--soon-bg); }
+.p3 { color: var(--worth); background: var(--worth-bg); } .p4 { color: var(--later); background: var(--later-bg); }
+details.rec { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+details.rec summary { list-style: none; cursor: pointer; padding: 12px 14px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 10px; align-items: start; }
+details.rec summary::-webkit-details-marker { display: none; }
+details.rec summary .cat { grid-column: 1; font-size: 0.75rem; color: var(--muted); }
+details.rec summary .chev { grid-row: 1 / span 2; grid-column: 2; color: var(--muted); transition: transform .15s; }
+details.rec[open] summary .chev { transform: rotate(90deg); }
+details.rec .body { padding: 0 14px 14px; display: grid; gap: 8px; font-size: 0.92rem; }
+.do { border-left: 3px solid var(--kowhai); padding-left: 10px; }
+
+/* Tables & chart */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td.r, th.r { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+svg text { fill: var(--muted); font: 11px var(--body); }
+.kv { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px 12px; font-size: 0.9rem; }
+.kv dd { margin: 0; font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.kv dt { color: var(--muted); }
+
+/* Forms */
+fieldset { border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin: 0; background: var(--surface); display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+legend { font-family: var(--display); font-weight: 700; font-size: 1.05rem; padding: 0 6px; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fields .wide { grid-column: 1 / -1; }
+label.f { display: grid; gap: 4px; font-size: 0.8rem; color: var(--muted); min-width: 0; }
+input, select, textarea { font: 16px var(--body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; width: 100%; min-width: 0; }
+input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--pounamu); }
+label.check { display: flex; gap: 8px; align-items: center; font-size: 0.88rem; }
+.item { border-top: 1px dashed var(--line); padding-top: 12px; display: grid; gap: 10px; }
+.item:first-of-type { border-top: 0; padding-top: 0; }
+.item-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+button { font: 600 0.9rem var(--body); border-radius: 10px; border: 1px solid var(--pounamu); background: var(--pounamu); color: var(--bg); padding: 10px 14px; cursor: pointer; }
+button.ghost { background: transparent; color: var(--pounamu); }
+button.link { border: 0; background: none; color: var(--muted); padding: 4px; font-weight: 500; text-decoration: underline; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--kowhai); outline-offset: 2px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.drop { border: 2px dashed var(--line); border-radius: 14px; padding: 18px; text-align: center; display: grid; gap: 8px; justify-items: center; }
+.disclaimer { font-size: 0.8rem; color: var(--muted); }
+
+/* Bottom tab bar */
+nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--surface); border-top: 1px solid var(--line);
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
+nav.tabs a { text-align: center; padding: 10px 4px 12px; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-decoration: none; display: grid; gap: 3px; justify-items: center; }
+nav.tabs a svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+nav.tabs a[aria-current="page"] { color: var(--pounamu); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 380px) { .stats { grid-template-columns: repeat(2, minmax(0,1fr)); } .worth .big { font-size: 1.8rem; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">Kiwiwealth · NZ family planner</span>
+    <h1 id="hh">Our plan</h1>
+    <div class="banner" id="exampleBanner" hidden>
+      <span>These are <strong>example numbers</strong>. Enter yours in Details.</span>
+      <button class="ghost" type="button" data-go="details">Enter ours</button>
+    </div>
+  </header>
+
+  <main id="view-plan" style="display:grid;gap:22px"></main>
+  <main id="view-details" style="display:grid;gap:16px" hidden></main>
+  <main id="view-budget" style="display:grid;gap:16px" hidden></main>
+  <main id="view-future" style="display:grid;gap:16px" hidden></main>
+
+  <p class="disclaimer">General information for your own household. It isn't regulated financial advice. It uses simplified NZ tax rules (checked late 2026) and assumed returns that aren't guaranteed. Your numbers are saved only in this browser on this device.</p>
+</div>
+
+<nav class="tabs" aria-label="Sections">
+  <a href="#plan" data-tab="plan"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>Plan</a>
+  <a href="#future" data-tab="future"><svg viewBox="0 0 24 24"><path d="M4 19l5-6 4 3 7-9"/></svg>Future</a>
+  <a href="#budget" data-tab="budget"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16"/></svg>Budget</a>
+  <a href="#details" data-tab="details"><svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1.5-4 12.5-4 14 0"/></svg>Details</a>
+</nav>
+
+<script id="engine">
+/* ===== NZ rules (dated, with sources). Mirrors kiwiwealth/nz_rules.py ===== */
+const NZ = {
+  income_tax_brackets: { src: "https://www.ird.govt.nz/income-tax/income-tax-for-individuals/tax-codes-and-tax-rates-for-individuals/tax-rates-for-individuals",
+    h: [["2024-07-31", [[15600, .105], [53500, .175], [78100, .30], [180000, .33], [null, .39]]]] },
+  acc_earners_levy: { src: "https://www.ird.govt.nz/income-tax/income-tax-for-individuals/acc-clients-and-carers/acc-earners-levy",
+    h: [["2025-04-01", { rate: .0167, max: 152790 }], ["2026-04-01", { rate: .0175, max: 156641 }]] },
+  student_loan: { src: "https://www.ird.govt.nz/student-loans/living-in-nz/repayments", h: [["2025-04-01", { rate: .12, threshold: 24128 }]] },
+  esct_brackets: { src: "https://www.ird.govt.nz/kiwisaver/kiwisaver-employers/making-kiwisaver-deductions/employer-superannuation-contribution-tax-esct",
+    h: [["2025-04-01", [[18720, .105], [64200, .175], [93720, .30], [216000, .33], [null, .39]]]] },
+  kiwisaver: { src: "https://budget.govt.nz/budget/pdfs/releases/l28a-factsheet-kiwisaver-changes.pdf",
+    h: [["2025-07-01", { def: .03, govt_rate: .25, govt_max: 260.72, full_at: 1042.86, cap: 180000 }],
+        ["2026-04-01", { def: .035, govt_rate: .25, govt_max: 260.72, full_at: 1042.86, cap: 180000 }],
+        ["2028-04-01", { def: .04, govt_rate: .25, govt_max: 260.72, full_at: 1042.86, cap: 180000 }]] },
+  pir_thresholds: { src: "https://www.ird.govt.nz/roles/portfolio-investment-entities/using-prescribed-investor-rates",
+    h: [["2025-04-01", [[15600, 53500, .105], [53500, 78100, .175]]]] },
+  fif: { src: "https://www.ird.govt.nz/income-tax/income-tax-for-individuals/types-of-individual-income/overseas-income/foreign-investment-funds-fifs",
+    h: [["2007-04-01", { de_minimis: 50000, fdr: .05 }]] },
+  nz_super: { src: "https://www.workandincome.govt.nz/eligibility/seniors/superannuation/payment-rates.html",
+    h: [["2025-04-01", { age: 65, couple: 41409, single: 26916 }]] },
+};
+const iso = d => d.toISOString().slice(0, 10);
+function rule(name, on) { let v; for (const [s, x] of NZ[name].h) if (s <= iso(on)) v = x; return v; }
+function progressive(a, br) { let t = 0, lo = 0; for (const [up, r] of br) { const top = up == null ? a : Math.min(a, up); if (top > lo) t += (top - lo) * r; if (up == null || a <= up) break; lo = up; } return Math.round(t * 100) / 100; }
+function band(a, br) { for (const [up, r] of br) if (up == null || a <= up) return r; }
+const incomeTax = (i, on) => progressive(Math.max(i, 0), rule("income_tax_brackets", on));
+const marginal = (i, on) => band(Math.max(i, 0), rule("income_tax_brackets", on));
+const esct = (sal, emp, on) => band(sal + emp, rule("esct_brackets", on));
+function takeHome(sal, ksRate, sl, on) {
+  const a = rule("acc_earners_levy", on), s = rule("student_loan", on);
+  return sal - incomeTax(sal, on) - Math.min(sal, a.max) * a.rate - (sl ? Math.max(sal - s.threshold, 0) * s.rate : 0) - sal * ksRate;
+}
+function govtContribution(c, income, age, on) {
+  const k = rule("kiwisaver", on);
+  if (income > k.cap || age < 16 || age >= rule("nz_super", on).age) return 0;
+  if (c >= k.full_at) return k.govt_max;
+  return Math.round(c * k.govt_rate * 100 + 1e-7) / 100;
+}
+function pir(taxable, pie, priorTaxable, priorPie, on) {
+  const th = rule("pir_thresholds", on);
+  const one = (t, p) => { for (const [mt, mx, r] of th) if (t <= mt && t + p <= mx) return r; return .28; };
+  const rates = [one(taxable, pie)];
+  if (priorTaxable != null && priorTaxable !== "") rates.push(one(+priorTaxable, priorPie ?? pie));
+  return Math.min(...rates);
+}
+
+/* ===== Maths ===== */
+function fv(pv, monthly, rate, years) { const n = Math.round(years * 12), r = rate / 12; if (n <= 0) return pv; if (r === 0) return pv + monthly * n; const g = (1 + r) ** n; return pv * g + monthly * (g - 1) / r; }
+function needMonthly(target, pv, rate, years) { const n = Math.round(years * 12); if (n <= 0) return Math.max(target - pv, 0); const r = rate / 12, s = target - pv * (1 + r) ** n; if (s <= 0) return 0; return r === 0 ? s / n : s * r / ((1 + r) ** n - 1); }
+function monthsToRepay(b, rate, pay) { if (b <= 0) return 0; const r = rate / 12; if (r === 0) return pay > 0 ? Math.ceil(b / pay) : null; if (pay <= b * r) return null; return Math.ceil(-Math.log(1 - r * b / pay) / Math.log(1 + r)); }
+function totalInterest(b, rate, pay) { const n = monthsToRepay(b, rate, pay); if (n == null) return null; let paid = 0, x = b; const r = rate / 12; for (let i = 0; i < n; i++) { const it = x * r, p = Math.min(pay, x + it); paid += p; x = x + it - p; } return paid - b; }
+const afterTax = (g, fee, t, ty) => g - fee - t * (ty == null ? g : Math.min(ty, g));
+const realRate = (n, i) => (1 + n) / (1 + i) - 1;
+
+const FUNDS = ["cash", "conservative", "balanced", "growth", "aggressive"];
+const ASSUME = { inflation: .02, swr: .04, efMonths: 4,
+  returns: { cash: .035, conservative: .045, balanced: .06, growth: .07, aggressive: .075 },
+  ty: { cash: null, conservative: .04, balanced: .045, growth: .048, aggressive: .05 } };
+const PRIORITY = { 1: "Do now", 2: "Do soon", 3: "Worth doing", 4: "Keep in mind" };
+const $ = x => (x < 0 ? "-$" : "$") + Math.round(Math.abs(x)).toLocaleString("en-NZ");
+const pc = (x, dp = 1) => (x * 100).toFixed(dp) + "%";
+
+/* ===== Rules engine. Mirrors kiwiwealth/advice.py ===== */
+function analyse(P, budget, on = new Date()) {
+  const people = P.people;
+  const taxable = p => (+p.salary || 0) + (+p.other || 0);
+  const pirs = {}, marg = {};
+  for (const p of people) { pirs[p.name] = pir(taxable(p), +p.pie || 0, p.priorTaxable, p.priorPie === "" || p.priorPie == null ? null : +p.priorPie, on); marg[p.name] = marginal(taxable(p), on); }
+  const maxPir = Math.max(...Object.values(pirs));
+  const fund = (type, fee, t, real) => { const r = afterTax(ASSUME.returns[type], fee, t, ASSUME.ty[type]); return real ? realRate(r, ASSUME.inflation) : r; };
+  const sum = (xs, f) => xs.reduce((a, x) => a + (+f(x) || 0), 0);
+  const cash = sum(P.cash, c => c.balance), inv = sum(P.holdings, h => h.value), ks = sum(people, p => p.ks ? p.ksBalance : 0);
+  const mort = P.mortgage, debt = (+mort.balance || 0) + sum(P.debts, d => d.balance);
+  const assets = (+P.home || 0) + (+P.other || 0) + cash + inv + ks;
+  const older = Math.max(...people.map(p => +p.age));
+  const horizon = Math.max(P.prefs.retireAge - older, 0);
+  const risk = P.prefs.risk;
+  const rInvReal = fund(risk, .004, maxPir, true);
+
+  let income, spending, cats = {};
+  if (budget) { income = budget.income; spending = budget.spending; cats = budget.cats; }
+  else {
+    spending = P.budget.spending === "" ? null : +P.budget.spending;
+    income = P.budget.income === "" || P.budget.income == null ? sum(people, p => takeHome(+p.salary || 0, p.ks ? +p.ksEmp : 0, p.sl, on)) / 12 : +P.budget.income;
+  }
+  const surplus = spending == null || income == null ? null : income - spending;
+  const recs = []; const add = (priority, cat, title, why, action, nums = {}) => recs.push({ priority, cat, title, why, action, nums });
+
+  // Expensive debt
+  for (const d of P.debts) if (+d.rate >= .08 && +d.balance > 0)
+    add(1, "Debt", `Clear the ${d.name} (${pc(+d.rate)})`, `Paying this off is a guaranteed ${pc(+d.rate)} return with no tax. No managed fund reliably beats that after fees and tax.`, "Put spare cash here before investing beyond the KiwiSaver minimum.");
+
+  // Emergency fund
+  if (spending) {
+    const target = spending * ASSUME.efMonths;
+    const redraw = mort.kind === "revolving" ? Math.max((+mort.limit || 0) - (+mort.balance || 0), 0) : 0;
+    const avail = sum(P.cash.filter(c => c.emergency), c => c.balance) + redraw;
+    if (avail < target) add(avail < target / 2 ? 1 : 2, "Safety net", "Build the emergency fund", `You have about ${(avail / spending).toFixed(1)} months of spending in accessible cash; the aim is ${ASSUME.efMonths} months.`, "Automate a weekly transfer to an on-call or PIE cash fund until it's full. An offset or revolving mortgage can hold this money and save interest at the same time.");
+    else if (avail > target * 2.5) add(3, "Safety net", "You may be holding too much cash", `Accessible cash covers ${Math.round(avail / spending)} months. After tax and inflation, cash usually loses buying power.`, `Keep about ${$(target)} as the emergency fund, then put the extra on the mortgage or into your investment plan.`);
+  }
+
+  // KiwiSaver
+  const k = rule("kiwisaver", on), full = k.full_at;
+  for (const p of people) {
+    const age = +p.age, hz = Math.max(65 - age, 0);
+    if (!p.ks) { if (age >= 16 && age < 65) add(1, "KiwiSaver", `${p.name}: join KiwiSaver`, "Employer contributions and the government contribution are free money.", "Join through your employer or a provider and pick a fund that suits your timeframe."); continue; }
+    const contrib = (+p.salary || 0) * (+p.ksEmp) + (+p.ksVoluntary || 0);
+    const govt = govtContribution(contrib, taxable(p), age, on);
+    const eligible = taxable(p) <= k.cap && age >= 16 && age < 65;
+    if (eligible && contrib < full) add(1, "KiwiSaver", `${p.name}: top up KiwiSaver to ${$(full)} by 30 June`, `The government adds 25c per $1 you contribute, up to ${$(k.govt_max)} a year. You're on track for about ${$(govt)}.`, `Make a voluntary payment of about ${$(full - contrib)} before 30 June each year.`);
+    if (taxable(p) > k.cap) add(4, "KiwiSaver", `${p.name}: no government contribution above ${$(k.cap)}`, "Since 1 July 2025 people earning over $180,000 don't get the government contribution.", "Contributions above your employer match lock money up until 65; for flexible goals, invest outside KiwiSaver instead.");
+    if (hz > 10 && (p.ksFund === "cash" || p.ksFund === "conservative") && risk !== "conservative") {
+      const gap = fv(+p.ksBalance, contrib / 12, fund("growth", +p.ksFee, pirs[p.name], true), hz) - fv(+p.ksBalance, contrib / 12, fund(p.ksFund, +p.ksFee, pirs[p.name], true), hz);
+      add(2, "KiwiSaver", `${p.name}: KiwiSaver fund may be too cautious`, `${hz} years to 65 in a ${p.ksFund} fund. A growth fund could add roughly ${$(gap)} by 65 (today's dollars), with bigger ups and downs along the way.`, "Review the fund type with your provider. Sorted's Fund Finder (sorted.org.nz) compares funds side by side.");
+    }
+    if (+p.ksFee > .01) add(3, "Fees", `${p.name}: KiwiSaver fees look high (${pc(+p.ksFee, 2)})`, "A 1% fee difference compounds to a large sum over decades.", "Compare fees for the same fund type on Sorted Fund Finder.");
+    if (+p.ksEmp < k.def && +p.salary > 0) add(2, "KiwiSaver", `${p.name}: check your KiwiSaver contribution rate`, `The minimum rate is now ${pc(k.def)}, unless you applied for a temporary rate reduction.`, "Check your payslip and talk to payroll.");
+  }
+
+  // PIR
+  for (const p of people) {
+    const right = pirs[p.name];
+    if (p.currentPir === "" || p.currentPir == null) add(3, "Tax", `${p.name}: confirm your PIR is ${pc(right)}`, "PIE funds (including KiwiSaver) tax you at your prescribed investor rate.", `Check that every KiwiSaver/managed fund provider has ${pc(right)}.`);
+    else if (Math.abs(+p.currentPir - right) > 1e-9) add(1, "Tax", `${p.name}: PIR is set to ${pc(+p.currentPir)} but should be ${pc(right)}`, +p.currentPir < right ? "Too low means a tax bill at year end." : "You're overpaying tax on your funds, and IRD won't refund it.", `Update your PIR with each provider to ${pc(right)}.`);
+  }
+
+  // Mortgage
+  const mb = +mort.balance || 0, mr = +mort.rate || 0, mp = +mort.repayment || 0;
+  const months = mb > 0 && mp ? monthsToRepay(mb, mr, mp) : (mb > 0 ? null : 0);
+  if (mb <= 0) add(3, "Mortgage", "Keep paying yourself the old mortgage payment", "With no mortgage, the money that used to go to the bank is your biggest wealth-building lever.", "Set an automatic monthly investment equal to your old repayment.");
+  else {
+    const ir = fund(risk, .004, maxPir, false);
+    let why, action;
+    if (mr >= ir) { why = `Your mortgage costs ${pc(mr, 2)}. Paying it down is a guaranteed, tax-free return at that rate. A ${risk} fund might return about ${pc(ir)} after fees and tax, and that isn't guaranteed. Paying off the mortgage wins.`; action = "Put spare cash on the mortgage until it's gone (watch fixed-rate break fees and lump-sum limits)."; }
+    else if (mr >= ir - .015) { why = `It's close: the mortgage costs ${pc(mr, 2)} (guaranteed), and a ${risk} fund might return about ${pc(ir)} after fees and tax (not guaranteed). Adjusted for risk, paying it off is at least as good, and it's nearly done.`; action = "Put lump sums on the mortgage at refix time (or into an offset account), while keeping regular fund contributions going so the habit is in place."; }
+    else { why = `Investing might return about ${pc(ir)} after tax vs a ${pc(mr, 2)} mortgage, but that edge isn't guaranteed.`; action = "Consider splitting spare cash: some on the mortgage, and some starting your investment habit now."; }
+    const intLeft = mp ? totalInterest(mb, mr, mp) : null;
+    add(2, "Mortgage", "Finish the mortgage, then redirect the repayment", why + (intLeft != null ? ` About ${$(intLeft)} of interest is left at your current repayments.` : ""), action);
+    if (mort.kind === "table" && mb < 150000) add(3, "Mortgage", "Consider an offset or revolving portion", "Spare cash and your emergency fund sitting against the loan cut interest and can still be accessed.", "Ask your bank about moving part of the loan to offset/revolving when the fixed term ends.");
+    if (months != null && mp && horizon - months / 12 > 0) {
+      const v = fv(0, mp, rInvReal, horizon - months / 12);
+      add(1, "Investing", "Plan now where the mortgage payment goes once it's paid off", `The mortgage should be gone in about ${months} months. Investing ${$(mp)}/month after that could grow to about ${$(v)} in today's dollars by retirement.`, "Set up the automatic investment for the day after the last repayment, so the money isn't absorbed into everyday spending.");
+    }
+  }
+
+  // Savings rate
+  if (income > 0 && surplus != null) {
+    const rate = surplus / income;
+    const top = Object.entries(cats).slice(0, 3).map(([c, v]) => `${c} ${$(v)}`).join(", ");
+    const tail = top ? ` Biggest categories: ${top}.` : "";
+    if (rate < 0) add(1, "Cashflow", "You're spending more than you earn", `On average you're ${$(-surplus)}/month behind.${tail}`, "Pick two categories to cut and set spending limits in your budgeting app.");
+    else if (rate < .1) add(2, "Cashflow", `Savings rate is ${pc(rate, 0)}; aim for 15-20%+`, `Your surplus is what pays for every goal and investment.${tail}`, "Automate savings on payday so you save first and spend what's left.");
+    else add(4, "Cashflow", `Savings rate is ${pc(rate, 0)}: good habit`, `A savings rate this high puts long-term goals within reach.${tail}`, "Make sure the surplus is actually invested on autopay and not left building up in the everyday account.");
+  }
+
+  // House concentration + downsizing
+  if (assets > 0 && +P.home > 0 && +P.home / assets >= .6) {
+    add(2, "Diversification", `The house is ${pc(+P.home / assets, 0)} of your wealth`, "A home is somewhere to live, but it doesn't pay you an income and you can't sell part of it. Most of your wealth depends on one property in one local market.", "Make building investments outside the house the main goal for the next 5-10 years.");
+    const net = +P.home * .25 - +P.home * .04, v = fv(net, 0, rInvReal, horizon);
+    add(4, "Diversification", "Scenario: downsizing the large house one day", `Moving to a home worth 25% less might free about ${$(net)} after roughly 4% costs (agent, legal, moving). No bright-line tax applies to your main home.`, `Invested, that could be about ${$(v)} in today's dollars by retirement, which is about ${$(v * ASSUME.swr)}/year of income. It's a lifestyle decision; this is only the money side.`);
+  }
+
+  // Investment plan
+  const highRate = people.filter(p => marg[p.name] > .28).map(p => p.name);
+  const core = P.prefs.shares ? .85 : 1;
+  let why = "This plan matches your preference for managed funds and shares and keeps fees and tax low.";
+  if (highRate.length) why += ` ${highRate.join(" and ")} pay tax above 28%. PIE funds cap tax at 28%, which beats holding term deposits or bonds in your own name. Direct NZ shares and overseas shares under the $50k FIF threshold can still be cheaper on tax. The reason to use PIE funds for the core is diversification and low fees.`;
+  add(2, "Investing", "Your investment plan: core funds + a small share satellite", why, `Core (${pc(core, 0)}): low-fee diversified PIE funds, either global and NZ/Australian share index funds or a single ${risk} multi-asset fund.` + (core < 1 ? ` Satellite (${pc(1 - core, 0)}): individual shares you pick, with no single company over ${pc(+P.prefs.maxShare, 0)}.` : "") + " Invest a fixed amount every week or month. Regular investing beats trying to time the market.");
+  if (inv > 0) {
+    const direct = sum(P.holdings.filter(h => h.type !== "pie"), h => h.value);
+    if (core < 1 && direct / inv > (1 - core) + .1) add(2, "Diversification", `Direct shares are ${pc(direct / inv, 0)} of your investments vs a ${pc(1 - core, 0)} plan`, "Picking shares is fine as a satellite. As the main part of the portfolio, your results rest on a small number of companies.", "Point new contributions at the core funds until the mix is back on target, instead of selling (which can trigger costs and tax).");
+    for (const h of P.holdings) {
+      if (h.type !== "pie" && h.single && +h.value / inv > +P.prefs.maxShare) add(2, "Diversification", `${h.name} is ${pc(+h.value / inv, 0)} of your investments`, "One company doing badly could knock a big hole in your plan.", "Direct new money elsewhere until it's back under your limit.");
+      if (+h.fee > .01) add(3, "Fees", `${h.name}: fee of ${pc(+h.fee, 2)} is high`, "Index funds in NZ commonly charge 0.2-0.5%.", "Check whether a cheaper fund gives you the same exposure.");
+    }
+  }
+
+  // FIF (direct offshore only, per person, on cost; joint split evenly)
+  for (const p of people) {
+    let cost = 0, val = 0;
+    for (const h of P.holdings) if (h.type === "direct_offshore") { const s = h.owner === p.name ? 1 : h.owner === "joint" ? 1 / people.length : 0; cost += (+h.cost || 0) * s; val += (+h.value || 0) * s; }
+    if (!cost) continue;
+    const f = rule("fif", on);
+    if (cost > f.de_minimis) add(2, "Tax", `${p.name}: FIF rules apply to your overseas shares`, `Direct overseas shares cost more than $50,000, so you're taxed on 5% of their opening value each year (about ${$(val * f.fdr * marg[p.name])} tax) whether or not you sell.`, "Include FIF income in your tax return. Each year, compare the FDR and comparative value methods. Consider putting new offshore money in PIE funds.");
+    else if (f.de_minimis - cost < 10000) add(3, "Tax", `${p.name}: close to the $50,000 FIF threshold`, `Only ${$(f.de_minimis - cost)} of headroom (measured on purchase cost, per person).`, "Buy new overseas shares in your partner's name, or get global exposure via NZ PIE funds.");
+  }
+
+  // Ownership
+  if (people.length > 1) {
+    const names = people.map(p => p.name), low = names.reduce((a, b) => marg[a] <= marg[b] ? a : b), high = names.reduce((a, b) => marg[a] >= marg[b] ? a : b);
+    const hasTaxable = P.holdings.some(h => (h.owner === high || h.owner === "joint") && h.type !== "pie") || sum(P.cash, c => c.balance * c.rate) > 500;
+    if (marg[high] - marg[low] >= .05 && hasTaxable) add(3, "Tax", `Hold taxable investments in ${low}'s name`, `Interest and dividends are taxed at the owner's rate: ${pc(marg[low])} for ${low} vs ${pc(marg[high])} for ${high}.`, `Put new term deposits, savings and direct shares in ${low}'s name, or use PIE funds, which are capped at 28%. Consider relationship property implications.`);
+  }
+
+  // Goals
+  const goals = []; let need = 0; const cap = FUNDS.indexOf(risk);
+  for (const g of [...P.goals].sort((a, b) => a.priority - b.priority || a.year - b.year)) {
+    const yrs = Math.max(+g.year - on.getFullYear(), 0);
+    let f = yrs < 3 ? "cash" : yrs < 7 ? "balanced" : "growth"; f = FUNDS[Math.min(FUNDS.indexOf(f), cap)];
+    const mth = needMonthly(+g.target, +g.saved || 0, fund(f, f === "cash" ? .003 : .004, maxPir, false), yrs);
+    need += mth; goals.push({ ...g, yrs, fund: f, monthly: mth });
+  }
+  if (goals.length) {
+    if (surplus != null && need > surplus) add(1, "Goals", "Your goals need more than your current surplus", `The goals need about ${$(need)}/month; your surplus is about ${$(surplus)}.`, "Push back lower-priority goals, trim spending, or count on the mortgage repayment freeing up.");
+    else add(3, "Goals", "Fund each goal from its own account or fund", `Your goals need about ${$(need)}/month in total. Cash suits goals under 3 years away, balanced 3-7 years, and growth anything longer.`, "Name a separate account or fund for each goal so progress is easy to see.");
+  }
+
+  // Idle surplus
+  const regular = sum(P.holdings, h => h.monthly);
+  if (surplus != null && surplus - need - regular >= 200) {
+    const idle = surplus - need - regular;
+    add(1, "Investing", `About ${$(idle)}/month of surplus has no job`, `After goal savings and current regular investments, about ${$(idle)}/month is unallocated. Invested, that's about ${$(fv(0, idle, rInvReal, horizon))} in today's dollars by retirement. Otherwise it tends to get spent.`, "Split it on payday by automatic transfer: top up the emergency fund first, then the mortgage (while it lasts) or the core funds.");
+  }
+
+  // Retirement + yearly series for chart
+  const sup = rule("nz_super", on);
+  const ksFor = (p, y) => {
+    const emp = (+p.salary || 0) * (+p.ksEmployer || 0), empNet = emp * (1 - esct(+p.salary || 0, emp, on));
+    const mem = (+p.salary || 0) * (+p.ksEmp) + (+p.ksVoluntary || 0), gv = govtContribution(mem, taxable(p), +p.age, on);
+    const contribYears = Math.min(y, Math.max(65 - +p.age, 0));
+    const r = fund(p.ksFund, +p.ksFee, pirs[p.name], true);
+    return fv(fv(+p.ksBalance, (mem + empNet + gv) / 12, r, contribYears), 0, r, y - contribYears);
+  };
+  const ksYear = y => sum(people.filter(p => p.ks), p => ksFor(p, y));
+  const invYear = y => {
+    let v = fv(inv, regular, rInvReal, y);
+    if (mb > 0 && mp && months != null && y - months / 12 > 0) v += fv(0, mp, rInvReal, y - months / 12);
+    return v;
+  };
+  const ksAt = sum(people.filter(p => p.ks), p => ksFor(p, Math.max(Math.max(P.prefs.retireAge, 65) - +p.age, 0))), invAt = invYear(horizon), projected = ksAt + invAt;
+  const superAmt = people.length > 1 ? sup.couple : sup.single;
+  const bridge = Math.max(sup.age - P.prefs.retireAge, 0);
+  const capitalNeeded = Math.max(P.prefs.target - superAmt, 0) / ASSUME.swr + bridge * superAmt;
+  const shortfall = Math.max(capitalNeeded - projected, 0);
+  const extra = shortfall ? needMonthly(shortfall, 0, rInvReal, horizon) : 0;
+  const series = []; for (let y = 0; y <= horizon; y++) series.push({ year: on.getFullYear() + y, ks: ksYear(y), inv: invYear(y) });
+  if (bridge && invAt < bridge * P.prefs.target) add(2, "Retirement", `Retiring at ${P.prefs.retireAge} needs savings outside KiwiSaver`, `KiwiSaver can't be withdrawn until 65, so the ${bridge} years before then need about ${$(bridge * P.prefs.target)} from other investments. You're projected to have ${$(invAt)}.`, "Put more of your new investing outside KiwiSaver, or plan a later retirement.");
+  if (shortfall > 0) add(2, "Retirement", `On track for about ${$(projected * ASSUME.swr + superAmt)}/yr vs a ${$(P.prefs.target)} target`, `Projected savings at retirement are ${$(projected)} (today's dollars) plus NZ Super. To reach your target you need about ${$(capitalNeeded)}.`, `Invest about ${$(extra)}/month more (on top of the redirected mortgage payment), or adjust the target or retirement age.`);
+  else add(3, "Retirement", "Retirement target looks achievable on current settings", `Projected ${$(projected)} in today's dollars plus NZ Super could support about ${$(projected * ASSUME.swr + superAmt)}/yr.`, "Stick with the plan and check every year. Extra savings give you the option of retiring earlier.");
+
+  // Protection
+  if (!P.wills) add(2, "Protection", "Make or update your wills and enduring powers of attorney", "Without these, your family and assets may not be looked after the way you want.", "See a lawyer or Public Trust. Review after big life changes.");
+  if (+P.dependants > 0 && !P.incomeCover) add(2, "Protection", "Check life and income-protection cover", "Your plan relies on your incomes. ACC only covers accidents, not illness.", "Get quotes or speak to an insurance adviser. Cover should fall as debt falls and wealth grows.");
+
+  recs.sort((a, b) => a.priority - b.priority);
+  return { recs, goals, pirs, marg, income, spending, surplus, cats, months,
+    sheet: { home: +P.home || 0, ks, inv, cash, other: +P.other || 0, debt, assets, net: assets - debt },
+    ret: { horizon, ksAt, invAt, projected, superAmt, capitalNeeded, shortfall, extra, income: projected * ASSUME.swr + superAmt, real: rInvReal, series } };
+}
+
+/* ===== CSV import. Mirrors kiwiwealth/budget_import.py ===== */
+const COLS = { date: ["date", "transaction date", "processed date"], amount: ["amount", "amount (nzd)", "value"], debit: ["debit", "withdrawal", "withdrawals", "amount (debit)", "money out"], credit: ["credit", "deposit", "deposits", "amount (credit)", "money in"], desc: ["description", "payee", "details", "other party", "merchant", "memo/description", "memo", "particulars", "op name"], cat: ["category", "categories", "budget category"] };
+const TRANSFERS = new Set(["transfer", "transfers", "internal transfer", "savings transfer"]);
+const KEYWORDS = { "Groceries": ["countdown", "woolworths", "pak n save", "paknsave", "pak'nsave", "new world", "four square", "fresh choice", "supervalue"], "Transport": ["z energy", " bp ", "bp connect", "mobil", "caltex", "gull", "waitomo", "at hop", "snapper", "uber", "nzta", "waka kotahi"], "Utilities": ["mercury", "genesis", "contact energy", "meridian", "electric kiwi", "powershop", "watercare", "one nz", "spark", "2degrees", "vodafone"], "Insurance": ["aa insurance", "ami ", "state insurance", "tower", "southern cross", "nib ", "partners life", "fidelity life", "aia "], "Dining & takeaways": ["cafe", "restaurant", "mcdonald", "kfc", "burger", "uber eats", "delivereasy", "domino", "subway"], "Shopping": ["kmart", "the warehouse", "farmers", "briscoes", "mitre 10", "bunnings", "noel leeming", "jb hi-fi", "amazon", "temu"], "Subscriptions": ["netflix", "spotify", "neon", "disney", "sky ", "apple.com", "google"], "Rates": ["council", "rates"], "Mortgage": ["mortgage", "home loan", "loan repayment"] };
+function csvRows(text) { const rows = []; let row = [], f = "", q = false; for (let i = 0; i < text.length; i++) { const c = text[i]; if (q) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; } else if (c === '"') q = true; else if (c === ",") { row.push(f); f = ""; } else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(f); rows.push(row); row = []; f = ""; } else f += c; } if (f || row.length) { row.push(f); rows.push(row); } return rows; }
+function parseDate(s) { s = s.trim(); let m; if ((m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/))) { let y = +m[3]; if (y < 100) y += 2000; return new Date(y, +m[2] - 1, +m[1]); } if ((m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/))) return new Date(+m[1], +m[2] - 1, +m[3]); const d = new Date(s); return isNaN(d) ? null : d; }
+const parseAmt = s => { s = (s || "").replace(/[$,]|NZD/g, "").trim(); if (!s) return 0; const neg = /^\(.*\)$/.test(s); const v = parseFloat(s.replace(/[()]/g, "")); return isNaN(v) ? 0 : neg ? -v : v; };
+const guessCat = d => { d = ` ${d.toLowerCase()} `; for (const [c, ws] of Object.entries(KEYWORDS)) if (ws.some(w => d.includes(w))) return c; return "Uncategorised"; };
+function parseCsv(text) {
+  const rows = csvRows(text.replace(/^﻿/, "")), norm = r => r.map(c => c.trim().toLowerCase());
+  const hi = rows.slice(0, 30).findIndex(r => { const n = norm(r); return n.some(c => COLS.date.includes(c)) && n.some(c => [...COLS.amount, ...COLS.debit, ...COLS.credit].includes(c)); });
+  if (hi < 0) throw new Error("Couldn't find a header row with a date column and an amount column. Check the file is a transaction export.");
+  const h = norm(rows[hi]), col = k => { for (const o of COLS[k]) { const i = h.indexOf(o); if (i >= 0) return i; } return -1; };
+  const [iD, iA, iDe, iC, iDs, iCa] = ["date", "amount", "debit", "credit", "desc", "cat"].map(col);
+  const out = [];
+  for (const r of rows.slice(hi + 1)) { if (!r[iD]) continue; const d = parseDate(r[iD]); if (!d) continue;
+    const amount = iA >= 0 && (r[iA] || "").trim() ? parseAmt(r[iA]) : (iC >= 0 ? parseAmt(r[iC]) : 0) - Math.abs(iDe >= 0 ? parseAmt(r[iDe]) : 0);
+    const desc = iDs >= 0 ? (r[iDs] || "").trim() : "", cat = iCa >= 0 && (r[iCa] || "").trim() ? r[iCa].trim() : guessCat(desc);
+    out.push({ date: d, amount, desc, cat }); }
+  return out;
+}
+function summarise(tx) {
+  if (!tx.length) throw new Error("No transactions found in the file.");
+  const t0 = Math.min(...tx.map(t => t.date)), t1 = Math.max(...tx.map(t => t.date));
+  const months = Math.max(((t1 - t0) / 864e5 + 1) / 30.44, 1);
+  let inc = 0, sp = 0, transfers = 0; const cats = {};
+  const isT = t => TRANSFERS.has(t.cat.toLowerCase()) || /\btransfer\b/i.test(t.desc);
+  for (const t of tx) { if (isT(t)) { transfers++; continue; } if (t.amount > 0) inc += t.amount; else { sp -= t.amount; cats[t.cat] = (cats[t.cat] || 0) - t.amount; } }
+  for (const t of tx) if (t.amount > 0 && !isT(t) && cats[t.cat] != null && t.cat !== "Uncategorised" && !["income", "salary", "wages", "pay"].includes(t.cat.toLowerCase())) { cats[t.cat] -= t.amount; inc -= t.amount; sp -= t.amount; }
+  const sorted = Object.fromEntries(Object.entries(cats).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, v / months]));
+  return { months: +months.toFixed(1), count: tx.length, transfers, income: inc / months, spending: sp / months, cats: sorted };
+}
+</script>
+
+<script>
+/* ===== Example household (shown until you save your own) ===== */
+const EXAMPLE = {
+  example: true, household: "The Example whānau", home: 1650000, other: 45000, dependants: 2, wills: true, incomeCover: false,
+  people: [
+    { name: "Alex", age: 44, salary: 145000, other: 1200, pie: 0, priorTaxable: "", priorPie: "", currentPir: .28, sl: false, ks: true, ksBalance: 165000, ksEmp: .035, ksEmployer: .035, ksVoluntary: 0, ksFund: "growth", ksFee: .006 },
+    { name: "Sam", age: 42, salary: 62000, other: 0, pie: 0, priorTaxable: "", priorPie: "", currentPir: .28, sl: false, ks: true, ksBalance: 82000, ksEmp: .035, ksEmployer: .035, ksVoluntary: 0, ksFund: "conservative", ksFee: .009 },
+  ],
+  cash: [{ name: "Everyday + on-call savings", balance: 18000, rate: .025, emergency: true }, { name: "Term deposit", balance: 20000, rate: .042, emergency: true }],
+  holdings: [
+    { name: "Global index fund", owner: "joint", type: "pie", value: 32000, cost: 26000, fee: .003, monthly: 400, single: false },
+    { name: "NZ shares", owner: "Alex", type: "nz_listed", value: 9000, cost: 7500, fee: 0, monthly: 0, single: false },
+    { name: "US shares", owner: "Alex", type: "direct_offshore", value: 44000, cost: 41500, fee: 0, monthly: 0, single: false },
+  ],
+  mortgage: { balance: 68000, rate: .0495, repayment: 3200, kind: "table", limit: 0 },
+  debts: [],
+  goals: [{ name: "Family trip to Europe", target: 25000, year: 2028, saved: 6000, priority: 2 }, { name: "Kids' university fund", target: 60000, year: 2036, saved: 5000, priority: 1 }, { name: "Car replacement", target: 30000, year: 2030, saved: 0, priority: 2 }],
+  budget: { income: 12000, spending: 7400 },
+  prefs: { risk: "growth", shares: true, retireAge: 62, target: 85000, maxShare: .10 },
+};
+const KEY = "kiwiwealth.v1";
+const clone = o => JSON.parse(JSON.stringify(o));
+let state, csvBudget = null;
+try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); state = s?.profile || clone(EXAMPLE); csvBudget = s?.csv || null; } catch { state = clone(EXAMPLE); }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify({ profile: state, csv: csvBudget })); } catch {} };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const el = id => document.getElementById(id);
+
+/* ===== Plan view ===== */
+function renderPlan(A) {
+  const s = A.sheet, total = Math.max(s.assets, 1);
+  const parts = [["House", s.home, "var(--kowhai)"], ["KiwiSaver", s.ks, "var(--hero-ks)"], ["Investments", s.inv, "var(--hero-inv)"], ["Cash & other", s.cash + s.other, "var(--hero-cash)"]];
+  const groups = {}; A.recs.forEach(r => (groups[r.priority] ||= []).push(r));
+  const rate = A.income > 0 && A.surplus != null ? A.surplus / A.income : null;
+  el("view-plan").innerHTML = `
+    <section class="worth" aria-label="Net worth">
+      <div><span class="eyebrow">Net worth</span><div class="big">${$(s.net)}</div>
+      <p class="small" style="opacity:.85">${$(s.assets)} assets − ${$(s.debt)} owed</p></div>
+      <div class="split"><div class="bar" role="img" aria-label="Where your wealth sits">${parts.map(([, v, c]) => `<span style="width:${v / total * 100}%;background:${c}"></span>`).join("")}</div>
+      <div class="legend">${parts.map(([k, v, c]) => `<span><i style="background:${c}"></i>${k} ${pc(v / total, 0)}</span>`).join("")}</div></div>
+    </section>
+    <section class="stats">
+      <div class="stat"><span class="v">${A.months == null ? "—" : A.months === 0 ? "Free" : A.months + " mo"}</span><span class="k">Mortgage-free in</span></div>
+      <div class="stat"><span class="v">${rate == null ? "—" : pc(rate, 0)}</span><span class="k">Savings rate${csvBudget ? " (from CSV)" : ""}</span></div>
+      <div class="stat"><span class="v">${$(A.ret.income)}</span><span class="k">Retirement income/yr</span></div>
+    </section>
+    <section class="group" aria-label="Action plan"><h2>Action plan</h2>
+    ${[1, 2, 3, 4].filter(p => groups[p]).map(p => `
+      <div class="group"><div class="group-head"><span class="pill p${p}">${PRIORITY[p]}</span><span class="muted small">${groups[p].length} item${groups[p].length > 1 ? "s" : ""}</span></div>
+      ${groups[p].map((r, i) => `<details class="rec"${p === 1 && i < 2 ? " open" : ""}><summary><h3>${esc(r.title)}</h3><span class="chev" aria-hidden="true">›</span><span class="cat">${r.cat}</span></summary>
+        <div class="body"><p>${esc(r.why)}</p><p class="do">${esc(r.action)}</p></div></details>`).join("")}</div>`).join("")}
+    </section>
+    <p class="small muted">Tax settings: ${state.people.map(p => `${esc(p.name)}, marginal ${pc(A.marg[p.name])}, PIR ${pc(A.pirs[p.name])}`).join("; ")}.</p>`;
+}
+
+/* ===== Future view ===== */
+function chart(series) {
+  const W = 340, H = 200, L = 46, R = 10, T = 12, B = 26;
+  const max = Math.max(...series.map(d => d.ks + d.inv), 1);
+  const step = [50e3, 100e3, 250e3, 500e3, 1e6, 2e6].find(s => max / s <= 5) || 5e6;
+  const top = Math.ceil(max / step) * step;
+  const x = i => L + (W - L - R) * (series.length > 1 ? i / (series.length - 1) : 0), y = v => T + (H - T - B) * (1 - v / top);
+  const area = (f, g) => series.map((d, i) => `${x(i)},${y(f(d))}`).join(" ") + " " + series.map((d, i) => `${x(i)},${y(g(d))}`).reverse().join(" ");
+  const ticks = []; for (let v = 0; v <= top; v += step) ticks.push(v);
+  const xt = series.filter((d, i) => i === 0 || i === series.length - 1 || (series.length > 8 && i % 5 === 0 && series.length - 1 - i >= 3));
+  const last = series[series.length - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Projected savings outside the house">
+    ${ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v >= 1e6 ? "$" + v / 1e6 + "m" : "$" + v / 1e3 + "k"}</text>`).join("")}
+    <polygon points="${area(d => d.ks, () => 0)}" fill="var(--pounamu)" opacity=".85"/>
+    <polygon points="${area(d => d.ks + d.inv, d => d.ks)}" fill="var(--kowhai)" opacity=".85"/>
+    <circle cx="${x(series.length - 1)}" cy="${y(last.ks + last.inv)}" r="4" fill="var(--ink)"/>
+    ${xt.map(d => { const i = series.indexOf(d); return `<text x="${x(i)}" y="${H - 8}" text-anchor="${i === 0 ? "start" : i === series.length - 1 ? "end" : "middle"}">${d.year}</text>`; }).join("")}
+  </svg>`;
+}
+function renderFuture(A) {
+  const r = A.ret;
+  el("view-future").innerHTML = `
+    <section class="card"><div><span class="eyebrow">Retirement projection · today's dollars</span><h2>${$(r.projected)} by ${new Date().getFullYear() + r.horizon}</h2></div>
+      ${r.series.length > 1 ? chart(r.series) : ""}
+      <div class="legend"><span><i style="background:var(--pounamu)"></i>KiwiSaver</span><span><i style="background:var(--kowhai)"></i>Investments (incl. redirected mortgage payment)</span></div>
+      <dl class="kv">
+        <dt>Years to retirement</dt><dd>${r.horizon}</dd>
+        <dt>KiwiSaver at 65</dt><dd>${$(r.ksAt)}</dd>
+        <dt>Other investments</dt><dd>${$(r.invAt)}</dd>
+        <dt>NZ Super (household)</dt><dd>${$(r.superAmt)}/yr</dd>
+        <dt>Sustainable income</dt><dd>${$(r.income)}/yr</dd>
+        <dt>Your target</dt><dd>${$(state.prefs.target)}/yr</dd>
+        ${r.shortfall ? `<dt>Extra needed</dt><dd>${$(r.extra)}/mo</dd>` : ""}
+      </dl>
+      <p class="small muted">Assumes ${pc(r.real)} a year real return after fees and tax, ${pc(ASSUME.inflation)} inflation and a 4% yearly drawdown. KiwiSaver contributions stop at 65.</p>
+    </section>
+    ${A.goals.length ? `<section class="card"><h2>Goals</h2><div class="scroll"><table><thead><tr><th>Goal</th><th class="r">Target</th><th class="r">Year</th><th>Keep it in</th><th class="r">Per month</th></tr></thead><tbody>
+      ${A.goals.map(g => `<tr><td>${esc(g.name)}</td><td class="r">${$(g.target)}</td><td class="r">${g.year}</td><td>${g.fund}</td><td class="r">${$(g.monthly)}</td></tr>`).join("")}
+      </tbody></table></div><p class="small muted">Cash for goals under 3 years away, balanced for 3-7 years, growth beyond that, never riskier than your chosen risk level.</p></section>` : ""}
+    <section class="card"><h2>Sources for NZ rules</h2><ul class="small" style="margin:0;padding-left:18px;display:grid;gap:4px">
+      ${Object.entries(NZ).map(([k, v]) => `<li><a href="${v.src}" target="_blank" rel="noopener" style="color:var(--pounamu)">${k.replace(/_/g, " ")}</a></li>`).join("")}</ul></section>`;
+}
+
+/* ===== Budget view ===== */
+function renderBudget(A) {
+  const b = csvBudget;
+  el("view-budget").innerHTML = `
+    <section class="card"><h2>Savings habits</h2>
+      <p class="small muted">Export transactions as CSV from your budgeting app or bank (ANZ, ASB, BNZ, Kiwibank, Westpac), then pick the file. It's read on this phone and never uploaded.</p>
+      <div class="drop"><input type="file" id="csvFile" accept=".csv,text/csv" multiple><span class="small muted">Choose several files to combine accounts</span></div>
+      <p id="csvMsg" class="small" role="status"></p>
+      <p class="small muted">Tip: tag moves between your own accounts, investment contributions and credit-card repayments (if you import the card too) as <strong>Transfer</strong> so they aren't counted as spending.</p>
+    </section>
+    ${b ? `<section class="card"><div class="row" style="justify-content:space-between"><h2>From your CSV</h2><button class="link" type="button" id="clearCsv">Use manual figures instead</button></div>
+      <dl class="kv"><dt>Period</dt><dd>${b.months} months</dd><dt>Transactions</dt><dd>${b.count} (${b.transfers} transfers left out)</dd>
+      <dt>Income</dt><dd>${$(b.income)}/mo</dd><dt>Spending</dt><dd>${$(b.spending)}/mo</dd><dt>Surplus</dt><dd>${$(b.income - b.spending)}/mo</dd></dl>
+      <div class="scroll"><table><thead><tr><th>Category</th><th class="r">Per month</th><th class="r">Share</th></tr></thead><tbody>
+      ${Object.entries(b.cats).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r">${$(v)}</td><td class="r">${pc(v / b.spending, 0)}</td></tr>`).join("")}</tbody></table></div></section>`
+    : `<section class="card"><h2>Manual figures</h2><p class="small muted">Used until you load a CSV. Leave income blank to estimate take-home pay from salaries.</p>
+      <div class="fields"><label class="f">Take-home income / month<input id="b-income" inputmode="decimal" value="${esc(state.budget.income)}"></label>
+      <label class="f">Spending / month (incl. mortgage)<input id="b-spending" inputmode="decimal" value="${esc(state.budget.spending)}"></label></div></section>`}`;
+  el("csvFile").addEventListener("change", async e => {
+    const msg = el("csvMsg");
+    try { let tx = []; for (const f of e.target.files) tx = tx.concat(parseCsv(await f.text())); csvBudget = summarise(tx); save(); msg.textContent = `Loaded ${csvBudget.count} transactions.`; refresh(); }
+    catch (err) { msg.textContent = err.message; }
+  });
+  el("clearCsv")?.addEventListener("click", () => { csvBudget = null; save(); refresh(); });
+  ["income", "spending"].forEach(k => el("b-" + k)?.addEventListener("change", e => { state.budget[k] = e.target.value === "" ? "" : +e.target.value; changed(); }));
+}
+
+/* ===== Details (form) ===== */
+const PIR_OPTS = [["", "Not sure"], [.105, "10.5%"], [.175, "17.5%"], [.28, "28%"]];
+const F = {
+  person: [["name", "Name", "text"], ["age", "Age", "num"], ["salary", "Salary (gross/yr)", "money"], ["other", "Other taxable income/yr", "money"], ["pie", "PIE income/yr (from funds)", "money"], ["priorTaxable", "Last year's taxable income", "money"], ["currentPir", "PIR set with providers", "select", PIR_OPTS], ["sl", "Student loan", "bool"], ["ks", "In KiwiSaver", "bool"], ["ksBalance", "KiwiSaver balance", "money"], ["ksEmp", "Your contribution", "select", [[.035, "3.5%"], [.04, "4%"], [.06, "6%"], [.08, "8%"], [.1, "10%"], [.03, "3% (reduced)"]]], ["ksEmployer", "Employer %", "pct"], ["ksVoluntary", "Extra voluntary $/yr", "money"], ["ksFund", "Fund type", "select", FUNDS.map(f => [f, f])], ["ksFee", "Total fees %", "pct"]],
+  cash: [["name", "Account", "text"], ["balance", "Balance", "money"], ["rate", "Interest %", "pct"], ["emergency", "Counts as emergency fund", "bool"]],
+  holdings: [["name", "Name", "text"], ["owner", "Owner", "owner"], ["type", "Type", "select", [["pie", "Managed fund (PIE)"], ["nz_listed", "NZ shares (direct)"], ["direct_offshore", "Overseas shares (direct)"], ["asx_exempt", "ASX shares (exempt)"]]], ["value", "Value now", "money"], ["cost", "Amount paid", "money"], ["fee", "Fee %", "pct"], ["monthly", "Monthly contribution", "money"], ["single", "Single company", "bool"]],
+  debts: [["name", "Debt", "text"], ["balance", "Balance", "money"], ["rate", "Interest %", "pct"]],
+  goals: [["name", "Goal", "text"], ["target", "Target", "money"], ["year", "Year", "num"], ["saved", "Saved so far", "money"], ["priority", "Priority", "select", [[1, "Must have"], [2, "Important"], [3, "Nice to have"]]]],
+};
+const BLANK = { person: { name: "", age: 40, salary: 0, other: 0, pie: 0, priorTaxable: "", priorPie: "", currentPir: "", sl: false, ks: true, ksBalance: 0, ksEmp: .035, ksEmployer: .035, ksVoluntary: 0, ksFund: "balanced", ksFee: .006 }, cash: { name: "Savings", balance: 0, rate: .03, emergency: true }, holdings: { name: "New fund", owner: "joint", type: "pie", value: 0, cost: 0, fee: .004, monthly: 0, single: false }, debts: { name: "Credit card", balance: 0, rate: .2 }, goals: { name: "New goal", target: 10000, year: new Date().getFullYear() + 3, saved: 0, priority: 2 } };
+function input(path, [key, label, kind, opts], obj, wide) {
+  const id = path + "." + key, v = obj[key];
+  if (kind === "bool") return `<label class="check${wide ? " wide" : ""}"><input type="checkbox" id="${id}" data-k="${id}" data-t="bool"${v ? " checked" : ""}>${label}</label>`;
+  if (kind === "select" || kind === "owner") {
+    const o = kind === "owner" ? [...state.people.map(p => [p.name, p.name]), ["joint", "Joint"]] : opts;
+    return `<label class="f">${label}<select id="${id}" data-k="${id}" data-t="${typeof o[0][0] === "number" ? "num" : "text"}">${o.map(([val, t]) => `<option value="${val}"${String(val) === String(v) ? " selected" : ""}>${t}</option>`).join("")}</select></label>`;
+  }
+  const shown = kind === "pct" ? (v === "" || v == null ? "" : +(v * 100).toFixed(3)) : (v ?? "");
+  return `<label class="f">${label}<input id="${id}" data-k="${id}" data-t="${kind}" ${kind === "text" ? "" : 'inputmode="decimal"'} value="${esc(shown)}"></label>`;
+}
+function list(key, title, schema, items, blank) {
+  return `<fieldset><legend>${title}</legend>${items.map((it, i) => `<div class="item"><div class="item-head"><strong>${esc(it.name || "Untitled")}</strong><button class="link" type="button" data-del="${key}.${i}">Remove</button></div>
+    <div class="fields">${schema.map(f => input(`${key}.${i}`, f, it)).join("")}</div></div>`).join("")}
+    <button class="ghost" type="button" data-addto="${key}" data-blank="${blank}">Add ${title.toLowerCase().replace(/s$/, "")}</button></fieldset>`;
+}
+function renderDetails() {
+  const S = state;
+  el("view-details").innerHTML = `
+    <fieldset><legend>Household</legend><div class="fields">
+      <label class="f wide">Name<input id="household" data-k="household" data-t="text" value="${esc(S.household)}"></label>
+      ${input("", ["home", "Home value", "money"], S)}${input("", ["other", "Cars & other assets", "money"], S)}
+      ${input("", ["dependants", "Dependants", "num"], S)}
+      <div style="display:grid;gap:8px">${input("", ["wills", "Wills up to date", "bool"], S)}${input("", ["incomeCover", "Income protection", "bool"], S)}</div></div></fieldset>
+    ${list("people", "People", F.person, S.people, "person")}
+    <fieldset><legend>Mortgage</legend><div class="fields">
+      ${input("mortgage", ["balance", "Balance owing", "money"], S.mortgage)}${input("mortgage", ["rate", "Interest %", "pct"], S.mortgage)}
+      ${input("mortgage", ["repayment", "Repayment / month", "money"], S.mortgage)}
+      ${input("mortgage", ["kind", "Loan type", "select", [["table", "Table loan"], ["revolving", "Revolving credit"], ["offset", "Offset"]]], S.mortgage)}
+      ${S.mortgage.kind === "revolving" ? input("mortgage", ["limit", "Revolving limit", "money"], S.mortgage) : ""}</div></fieldset>
+    ${list("cash", "Cash accounts", F.cash, S.cash, "cash")}
+    ${list("holdings", "Investments", F.holdings, S.holdings, "holdings")}
+    ${list("debts", "Other debts", F.debts, S.debts, "debts")}
+    ${list("goals", "Goals", F.goals, S.goals, "goals")}
+    <fieldset><legend>Preferences</legend><div class="fields">
+      ${input("prefs", ["risk", "Risk level", "select", FUNDS.slice(1).map(f => [f, f])], S.prefs)}
+      ${input("prefs", ["retireAge", "Retire at age", "num"], S.prefs)}
+      ${input("prefs", ["target", "Retirement income/yr (today's $)", "money"], S.prefs)}
+      ${input("prefs", ["maxShare", "Max in one company %", "pct"], S.prefs)}
+      ${input("prefs", ["shares", "Include a share satellite", "bool"], S.prefs, true)}</div></fieldset>
+    <fieldset><legend>Move to another phone</legend>
+      <p class="small muted">Copy your data here, then paste it on the other phone (for example your partner's).</p>
+      <div class="row"><button type="button" id="copyData">Copy my data</button><button class="ghost" type="button" id="resetEx">Start again with example</button></div>
+      <textarea id="pasteBox" rows="3" placeholder="Paste data here to load it"></textarea>
+      <p id="moveMsg" class="small" role="status"></p></fieldset>`;
+}
+function setPath(path, value) { const ks = path.split(".").filter(Boolean); let o = state; for (const k of ks.slice(0, -1)) o = o[k]; const last = ks[ks.length - 1]; const old = o[last]; o[last] = value; return old; }
+el("view-details").addEventListener("change", e => {
+  const t = e.target, k = t.dataset.k; if (!k) return;
+  let v = t.value; const kind = t.dataset.t;
+  if (kind === "bool") v = t.checked; else if (kind === "pct") v = v === "" ? 0 : +v / 100; else if (kind === "money" || kind === "num") v = v === "" ? (k.endsWith("priorTaxable") ? "" : 0) : +v.replace(/[$,]/g, "");
+  const old = setPath(k, v);
+  if (k.match(/^people\.\d+\.name$/)) state.holdings.forEach(h => { if (h.owner === old) h.owner = v; });
+  changed(k.endsWith(".kind") || k.endsWith(".name"));
+});
+el("view-details").addEventListener("click", async e => {
+  const t = e.target;
+  if (t.dataset.addto) { state[t.dataset.addto].push(clone(BLANK[t.dataset.blank])); changed(true); }
+  if (t.dataset.del) { const [key, i] = t.dataset.del.split("."); if (key === "people" && state.people.length === 1) return; state[key].splice(+i, 1); changed(true); }
+  if (t.id === "copyData") { const text = JSON.stringify(state); try { await navigator.clipboard.writeText(text); el("moveMsg").textContent = "Copied. Paste it on the other phone."; } catch { const b = el("pasteBox"); b.value = text; b.select(); el("moveMsg").textContent = "Selected below. Copy it manually."; } }
+  if (t.id === "resetEx") { state = clone(EXAMPLE); csvBudget = null; save(); refresh(true); }
+});
+el("view-details").addEventListener("paste", e => {
+  if (e.target.id !== "pasteBox") return;
+  setTimeout(() => { try { const s = JSON.parse(el("pasteBox").value); if (!s.people) throw 0; state = s; save(); refresh(true); el("moveMsg").textContent = "Loaded."; } catch { el("moveMsg").textContent = "That doesn't look like copied Kiwiwealth data."; } }, 0);
+});
+
+/* ===== Wiring ===== */
+function changed(rerenderForm) { state.example = false; save(); refresh(rerenderForm); }
+function refresh(rerenderForm = true) {
+  let A; try { A = analyse(state, csvBudget); } catch (err) { el("view-plan").innerHTML = `<p class="banner">Couldn't build the plan: ${esc(err.message)}. Check the Details tab.</p>`; return; }
+  el("hh").textContent = state.household || "Our plan";
+  el("exampleBanner").hidden = !state.example;
+  renderPlan(A); renderFuture(A); renderBudget(A);
+  if (rerenderForm || !el("view-details").innerHTML) renderDetails();
+}
+function route() {
+  const tab = ["plan", "details", "budget", "future"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "plan";
+  for (const t of ["plan", "details", "budget", "future"]) el("view-" + t).hidden = t !== tab;
+  document.querySelectorAll("nav.tabs a").forEach(a => a.dataset.tab === tab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  window.scrollTo(0, 0);
+}
+document.addEventListener("click", e => { const g = e.target.closest("[data-go]"); if (g) location.hash = g.dataset.go; });
+window.addEventListener("hashchange", route);
+refresh(true); route();
+</script>
