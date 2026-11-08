@@ -147,3 +147,9 @@ def test_legacy_kiwisaver_field_still_loads():
     p = base()
     assert p.people[0].schemes[0].kind == "kiwisaver"
     assert p.total_kiwisaver == 50_000
+
+
+def test_example_projection_matches_phone_app_check():
+    # scripts/check_app_engine.js expects these same figures from the phone page's engine.
+    r = analyse(load_profile(EXAMPLES / "profile.example.yaml"), on=ON).retirement
+    assert (r["kiwisaver_projected"], r["workplace_projected"], r["investments_projected"]) == (717_773, 354_401, 1_073_195)
