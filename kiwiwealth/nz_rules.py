@@ -171,6 +171,22 @@ def esct_rate(salary: float, employer_contribution: float, on: date | None = Non
     return _band_rate(salary + employer_contribution, rule("esct_brackets", on))
 
 
+def esct_gross_up(net: float, salary: float, other_employer_gross: float = 0.0,
+                  on: date | None = None) -> float:
+    """Gross employer contribution from an after-ESCT figure (e.g. a fund statement).
+
+    The ESCT band depends on the gross itself, so iterate to a fixed point.
+    """
+    gross = net
+    for _ in range(20):
+        rate = esct_rate(salary, other_employer_gross + gross, on)
+        new = net / (1 - rate)
+        if abs(new - gross) < 0.005:
+            break
+        gross = new
+    return round(gross, 2)
+
+
 def take_home_pay(salary: float, kiwisaver_rate: float = 0.0, student_loan: bool = False,
                   on: date | None = None) -> dict[str, float]:
     tax = income_tax(salary, on)

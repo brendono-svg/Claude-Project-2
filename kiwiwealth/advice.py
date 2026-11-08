@@ -87,9 +87,47 @@ def pct(x: float, dp: int = 1) -> str:
     return f"{x * 100:.{dp}f}%"
 
 
-def _ks_member_contrib(p: Person) -> float:
-    ks = p.kiwisaver
-    return p.salary * ks.employee_rate + ks.self_employed_annual if ks else 0.0
+@dataclass
+class SchemeFlow:
+    """Yearly money into one scheme."""
+    scheme: Any
+    member: float
+    employer_gross: float
+    employer_net: float
+    govt: float
+
+    @property
+    def total(self) -> float:
+        return self.member + self.employer_net + self.govt
+
+
+def scheme_flows(p: Person, on: date) -> list[SchemeFlow]:
+    """Annualise every contribution. Employer $ given after tax are grossed up; the ESCT
+    band is set by salary plus all of this employer's super contributions."""
+    gross = [sc.employer.annual(p.salary) for sc in p.schemes]  # start from the stated figures
+    for _ in range(5):  # settle the shared ESCT band across schemes
+        total = sum(gross)
+        for i, sc in enumerate(p.schemes):
+            e = sc.employer
+            if e.unit != "pct" and e.after_tax:
+                gross[i] = nz.esct_gross_up(e.annual(p.salary), p.salary, total - gross[i], on)
+    rate = nz.esct_rate(p.salary, sum(gross), on)
+    flows = []
+    for sc, g in zip(p.schemes, gross):
+        member = sc.member.annual(p.salary) + sc.voluntary_annual
+        govt = nz.kiwisaver_govt_contribution(member, p.taxable_income, p.age, on) if sc.kind == "kiwisaver" else 0.0
+        flows.append(SchemeFlow(sc, member, g, g * (1 - rate), govt))
+    # Only one KiwiSaver account can earn the government contribution.
+    seen = False
+    for f in flows:
+        if f.govt and seen:
+            f.govt = 0.0
+        seen = seen or bool(f.govt)
+    return flows
+
+
+def scheme_tax(a: "Analysis", p: Person, sc) -> float:
+    return a.pirs[p.name] if sc.pie else 0.28
 
 
 # ---------------------------------------------------------------------------
@@ -140,47 +178,97 @@ def rule_kiwisaver(a: Analysis) -> None:
     ks_rule = nz.rule("kiwisaver", a.on)
     full = nz.kiwisaver_contribution_for_max_govt(a.on)
     risk = a.profile.preferences.risk_tolerance
+    retire = a.profile.preferences.retirement_age
+    super_age = nz.rule("nz_super", a.on)["age"]
+    min_rate = ks_rule["default_employee_rate"]
     for p in a.profile.people:
-        horizon = years_to(p.age, nz.rule("nz_super", a.on)["age"])
-        if p.kiwisaver is None:
+        flows = scheme_flows(p, a.on)
+        ks_flows = [f for f in flows if f.scheme.kind == "kiwisaver"]
+        if not ks_flows:
             if 16 <= p.age < 65:
                 a.add(1, "KiwiSaver", f"{p.name}: join KiwiSaver",
                       "Employer contributions and the government contribution are free money.",
                       "Join through your employer or a provider and pick a fund that suits your timeframe.")
-            continue
-        ks = p.kiwisaver
-        contrib = _ks_member_contrib(p)
-        govt = nz.kiwisaver_govt_contribution(contrib, p.taxable_income, p.age, a.on)
-        eligible = p.taxable_income <= ks_rule["govt_income_cap"] and 16 <= p.age < 65
-        if eligible and contrib < full:
-            a.add(1, "KiwiSaver", f"{p.name}: top up KiwiSaver to {m(full)} by 30 June",
-                  f"The government adds 25c per $1 you contribute, up to "
-                  f"{m(ks_rule['govt_max'])} a year. You're on track for about {m(govt)}.",
-                  f"Make a voluntary payment of about {m(full - contrib)} before 30 June each year.",
-                  {"contributing": round(contrib), "govt_contribution": govt,
-                   "top_up": round(full - contrib, 2)})
-        if not eligible and p.taxable_income > ks_rule["govt_income_cap"]:
-            a.add(4, "KiwiSaver", f"{p.name}: no government contribution above {m(ks_rule['govt_income_cap'])}",
-                  "Since 1 July 2025 people earning over $180,000 don't get the government contribution.",
-                  "Contributions above your employer match lock money up until 65; for "
-                  "flexible goals, invest outside KiwiSaver instead.")
-        if horizon > 10 and ks.fund_type in ("cash", "conservative") and risk != "conservative":
-            gap = future_value(ks.balance, contrib / 12, fund_after_tax(a, "growth", ks.fee_pct, a.pirs[p.name], True), horizon) - \
-                  future_value(ks.balance, contrib / 12, fund_after_tax(a, ks.fund_type, ks.fee_pct, a.pirs[p.name], True), horizon)
-            a.add(2, "KiwiSaver", f"{p.name}: KiwiSaver fund may be too cautious",
-                  f"{horizon} years to 65 in a {ks.fund_type} fund. Over long periods, growth "
-                  "funds have tended to end well ahead, despite bigger ups and downs along the way.",
-                  "Review the fund type with your provider (use the Sorted Fund Finder to compare).",
-                  {"extra_at_65_todays_dollars": round(gap)})
-        if ks.fee_pct > 0.01:
-            a.add(3, "Fees", f"{p.name}: KiwiSaver fees look high ({pct(ks.fee_pct, 2)})",
-                  "A 1% fee difference compounds to a large sum over decades.",
-                  "Compare fees for the same fund type on Sorted Fund Finder.")
-        if ks.employee_rate < ks_rule["default_employee_rate"] and p.salary > 0:
-            a.add(2, "KiwiSaver", f"{p.name}: check your KiwiSaver contribution rate",
-                  f"The minimum rate is now {pct(ks_rule['default_employee_rate'])}, unless you "
-                  "applied for a temporary rate reduction.",
-                  "Check your payslip and talk to payroll.")
+        for f in ks_flows:
+            ks, contrib = f.scheme, f.member
+            eligible = p.taxable_income <= ks_rule["govt_income_cap"] and 16 <= p.age < 65
+            if eligible and contrib < full:
+                a.add(1, "KiwiSaver", f"{p.name}: top up KiwiSaver to {m(full)} by 30 June",
+                      f"The government adds 25c per $1 you contribute, up to "
+                      f"{m(ks_rule['govt_max'])} a year. You're on track for about {m(f.govt)}.",
+                      f"Make a voluntary payment of about {m(full - contrib)} before 30 June each year.",
+                      {"contributing": round(contrib), "govt_contribution": f.govt,
+                       "top_up": round(full - contrib, 2)})
+            if p.taxable_income > ks_rule["govt_income_cap"]:
+                a.add(4, "KiwiSaver", f"{p.name}: no government contribution above {m(ks_rule['govt_income_cap'])}",
+                      "Since 1 July 2025 people earning over $180,000 don't get the government contribution.",
+                      "Contributions above your employer match lock money up until 65; for "
+                      "flexible goals, invest outside KiwiSaver instead.")
+            if p.salary > 0:
+                member_rate = ks.member.annual(p.salary) / p.salary
+                employer_rate = f.employer_gross / p.salary
+                if member_rate < min_rate - 0.002:
+                    a.add(2, "KiwiSaver", f"{p.name}: check your KiwiSaver contribution rate",
+                          f"You're contributing about {pct(member_rate)} of salary; the minimum is now "
+                          f"{pct(min_rate)} unless you applied for a temporary rate reduction.",
+                          "Check your payslip and talk to payroll.")
+                if 0 < employer_rate < ks_rule["employer_min_rate"] - 0.002:
+                    a.add(3, "KiwiSaver", f"{p.name}: employer KiwiSaver is about {pct(employer_rate)}, below the {pct(min_rate)} minimum",
+                          f"Employers must pay at least {pct(min_rate)} of gross pay from 1 April 2026. "
+                          "Some employers count contributions to a workplace scheme toward this, or your "
+                          "figures may be from before the change or based on base pay only.",
+                          "Check your payslip or employment agreement with payroll.",
+                          {"employer_rate": round(employer_rate, 4)})
+                if retire < super_age and member_rate > min_rate + 0.005:
+                    excess = (member_rate - min_rate) * p.salary
+                    a.add(2, "KiwiSaver", f"{p.name}: KiwiSaver contributions above {pct(min_rate)} are locked until {super_age}",
+                          f"You plan to stop work at {retire}, but you're putting about {pct(member_rate)} "
+                          f"into KiwiSaver, which you can't touch until {super_age}. About {m(excess)}/yr "
+                          "could go somewhere you can reach earlier.",
+                          f"Consider dropping to {pct(min_rate)} and sending the difference to your workplace "
+                          "scheme or your own investments. First check that your employer's contribution doesn't "
+                          "depend on your rate.", {"excess_annual": round(excess)})
+        for f in flows:
+            sc = f.scheme
+            access_age = super_age if sc.kind == "kiwisaver" else retire
+            horizon = years_to(p.age, access_age)
+            label = "KiwiSaver" if sc.kind == "kiwisaver" else sc.name
+            t = scheme_tax(a, p, sc)
+            if horizon > 10 and sc.fund_type in ("cash", "conservative") and risk != "conservative":
+                gap = future_value(sc.balance, f.total / 12, fund_after_tax(a, "growth", sc.fee_pct, t, True), horizon) - \
+                      future_value(sc.balance, f.total / 12, fund_after_tax(a, sc.fund_type, sc.fee_pct, t, True), horizon)
+                a.add(2, "KiwiSaver" if sc.kind == "kiwisaver" else "Super", f"{p.name}: {label} fund may be too cautious",
+                      f"{horizon} years until you can use it, in a {sc.fund_type} fund. Over long periods, growth "
+                      "funds have tended to end well ahead, despite bigger ups and downs along the way.",
+                      "Review the fund type with your provider (use the Sorted Fund Finder to compare).",
+                      {"extra_todays_dollars": round(gap)})
+            if sc.fee_pct > 0.01:
+                a.add(3, "Fees", f"{p.name}: {label} fees look high ({pct(sc.fee_pct, 2)})",
+                      "A 1% fee difference compounds to a large sum over decades.",
+                      "Compare fees for the same fund type on Sorted Fund Finder.")
+
+
+def rule_workplace(a: Analysis) -> None:
+    for p in a.profile.people:
+        for f in scheme_flows(p, a.on):
+            sc = f.scheme
+            if sc.kind != "workplace":
+                continue
+            rate = f.employer_gross / p.salary if p.salary else 0
+            why = (f"{m(sc.balance)} that you can take when you leave your job. Your employer adds about "
+                   f"{m(f.employer_net)}/yr after tax ({pct(rate)} of salary before tax) and you add {m(f.member)}/yr. "
+                   "Unlike KiwiSaver it isn't locked to 65, so it can fund the years before NZ Super.")
+            if sc.vested_pct < 1:
+                why += (f" Only {pct(sc.vested_pct, 0)} is vested now, so leaving early could forfeit about "
+                        f"{m(sc.balance * (1 - sc.vested_pct))} of employer money.")
+            if not sc.pie:
+                why += " As a non-PIE scheme it's taxed at 28% regardless of your PIR."
+            a.add(3, "Super", f"{p.name}: plan for the {sc.name} payout", why,
+                  "When you leave, move it into a PIE fund of the same risk level instead of taking "
+                  "cash, unless it's earmarked for a goal. Check whether you can stay in the scheme "
+                  "after leaving, or transfer to its personal section.",
+                  {"balance": sc.balance, "employer_net_annual": round(f.employer_net),
+                   "member_annual": round(f.member)})
 
 
 def rule_pir(a: Analysis) -> None:
@@ -468,18 +556,18 @@ def rule_retirement(a: Analysis) -> None:
     older = max(x.age for x in p.people)
     horizon = years_to(older, prefs.retirement_age)
 
-    ks_total = 0.0
+    ks_total = wp_total = 0.0
     for person in p.people:
-        ks = person.kiwisaver
-        if not ks:
-            continue
-        employer = person.salary * ks.employer_rate
-        employer_net = employer * (1 - nz.esct_rate(person.salary, employer, a.on))
-        member = _ks_member_contrib(person)
-        govt = nz.kiwisaver_govt_contribution(member, person.taxable_income, person.age, a.on)
-        yrs = years_to(person.age, max(prefs.retirement_age, super_rule["age"]))
-        r = fund_after_tax(a, ks.fund_type, ks.fee_pct, a.pirs[person.name], True)
-        ks_total += future_value(ks.balance, (member + employer_net + govt) / 12, r, yrs)
+        stop = years_to(person.age, prefs.retirement_age)  # contributions stop when work stops
+        for f in scheme_flows(person, a.on):
+            sc = f.scheme
+            r = fund_after_tax(a, sc.fund_type, sc.fee_pct, scheme_tax(a, person, sc), True)
+            if sc.kind == "kiwisaver":
+                until = years_to(person.age, max(prefs.retirement_age, super_rule["age"]))
+                paying = min(stop, years_to(person.age, super_rule["age"]))
+                ks_total += future_value(future_value(sc.balance, f.total / 12, r, paying), 0, r, until - paying)
+            else:
+                wp_total += future_value(sc.balance, f.total / 12, r, stop)
 
     pir = max(a.pirs.values())
     r_inv = fund_after_tax(a, prefs.risk_tolerance, 0.004, pir, True)
@@ -498,21 +586,23 @@ def rule_retirement(a: Analysis) -> None:
     capital_needed = gap_income / swr
     bridge_years = max(super_rule["age"] - prefs.retirement_age, 0)
     capital_needed += bridge_years * nz_super  # cover the years before NZ Super starts
-    projected = ks_total + inv_total
+    projected = ks_total + wp_total + inv_total
     if bridge_years:
         bridge_cost = bridge_years * prefs.retirement_income_target
-        if inv_total < bridge_cost:
+        if inv_total + wp_total < bridge_cost:
             a.add(2, "Retirement", f"Retiring at {prefs.retirement_age} needs savings outside KiwiSaver",
                   f"KiwiSaver can't be withdrawn until {super_rule['age']}, so the {bridge_years} years before then "
-                  f"need about {m(bridge_cost)} from other investments. You're projected to have {m(inv_total)}.",
+                  f"need about {m(bridge_cost)} from other savings. You're projected to have {m(inv_total + wp_total)} "
+                  "(investments plus workplace schemes).",
                   "Put more of your new investing outside KiwiSaver, or plan a later retirement.",
-                  {"bridge_cost": round(bridge_cost), "investments_projected": round(inv_total)})
+                  {"bridge_cost": round(bridge_cost), "accessible_projected": round(inv_total + wp_total)})
     shortfall = max(capital_needed - projected, 0)
     extra = required_monthly(capital_needed, projected, 0.0, 0) if horizon == 0 else \
         (required_monthly(shortfall, 0, r_inv, horizon) if shortfall else 0.0)
 
     a.retirement = {
         "years_to_retirement": horizon, "kiwisaver_projected": round(ks_total),
+        "workplace_projected": round(wp_total),
         "investments_projected": round(inv_total), "total_projected": round(projected),
         "nz_super_annual": nz_super, "income_target": prefs.retirement_income_target,
         "capital_needed": round(capital_needed), "shortfall": round(shortfall),
@@ -547,7 +637,7 @@ def rule_protection(a: Analysis) -> None:
 
 
 RULES: list[Callable[[Analysis], None]] = [
-    rule_expensive_debt, rule_emergency_fund, rule_kiwisaver, rule_pir, rule_mortgage,
+    rule_expensive_debt, rule_emergency_fund, rule_kiwisaver, rule_workplace, rule_pir, rule_mortgage,
     rule_savings_rate, rule_concentration, rule_investment_plan, rule_fif, rule_ownership,
     rule_goals, rule_idle_surplus, rule_retirement, rule_protection,
 ]
@@ -564,8 +654,8 @@ def analyse(profile: Profile, budget: BudgetSummary | None = None, on: date | No
         income = profile.budget.monthly_net_income
         spending = profile.budget.monthly_spending
         if income is None and any(p.salary for p in profile.people):
-            income = sum(nz.take_home_pay(p.salary, p.kiwisaver.employee_rate if p.kiwisaver else 0,
-                                          p.student_loan, on)["net"] for p in profile.people) / 12
+            income = sum(nz.take_home_pay(p.salary, 0, p.student_loan, on)["net"]
+                         - sum(f.member for f in scheme_flows(p, on)) for p in profile.people) / 12
 
     a = Analysis(profile, on, budget, income, spending, pirs, marg)
     for r in RULES:

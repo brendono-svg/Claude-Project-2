@@ -73,3 +73,12 @@ def test_take_home_pay_components():
 def test_esct():
     assert nz.esct_rate(60_000, 2_100, ON) == 0.175
     assert nz.esct_rate(250_000, 8_750, ON) == 0.39
+
+
+def test_esct_gross_up_roundtrip():
+    # Six months of statement (after-tax) employer KiwiSaver, annualised.
+    net = 2_588.44 * 2
+    gross = nz.esct_gross_up(net, 137_400, other_employer_gross=9_617.92, on=ON)
+    rate = nz.esct_rate(137_400, 9_617.92 + gross, ON)
+    assert rate == 0.33
+    assert gross * (1 - rate) == pytest.approx(net, abs=0.02)

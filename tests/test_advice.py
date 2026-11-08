@@ -105,3 +105,45 @@ def test_pir_uses_prior_year_pie_income():
 def test_bridge_before_kiwisaver_access():
     p = base(preferences={"retirement_age": 55, "retirement_income_target": 80_000})
     assert any("needs savings outside KiwiSaver" in t for t in titles(analyse(p, on=ON)))
+
+
+def two_schemes(**prefs):
+    return base(people=[{
+        "name": "F", "age": 50, "salary": 137_400,
+        "schemes": [
+            {"name": "KiwiSaver", "kind": "kiwisaver", "balance": 110_000, "fund_type": "growth",
+             "member": {"amount": 4_241.40, "unit": "six_months"},
+             "employer": {"amount": 2_588.44, "unit": "six_months", "after_tax": True}},
+            {"name": "Work scheme", "kind": "workplace", "balance": 120_000, "fund_type": "growth",
+             "member": {"amount": 121.17, "unit": "fortnight"},
+             "employer": {"amount": 369.92, "unit": "fortnight"}},
+        ]}], preferences={"retirement_age": 60, **prefs})
+
+
+def test_contribution_units_and_esct():
+    from kiwiwealth.advice import scheme_flows
+    ks, wp = scheme_flows(two_schemes().people[0], ON)
+    assert ks.member == pytest.approx(8_482.80)
+    assert wp.member == pytest.approx(3_150.42)
+    assert wp.employer_gross == pytest.approx(9_617.92)
+    assert ks.employer_net == pytest.approx(5_176.88, abs=0.05)  # statement figure was already net
+    assert ks.govt == 260.72 and wp.govt == 0  # govt contribution is KiwiSaver-only
+
+
+def test_workplace_scheme_counts_for_bridge_and_has_own_advice():
+    a = analyse(two_schemes(), on=ON)
+    assert a.retirement["workplace_projected"] > 120_000
+    assert any("plan for the Work scheme payout" in t for t in titles(a))
+
+
+def test_kiwisaver_lock_warning_when_retiring_early():
+    t = titles(analyse(two_schemes(), on=ON))
+    assert any("locked until 65" in x for x in t)
+    t65 = titles(analyse(two_schemes(retirement_age=65), on=ON))
+    assert not any("locked until 65" in x for x in t65)
+
+
+def test_legacy_kiwisaver_field_still_loads():
+    p = base()
+    assert p.people[0].schemes[0].kind == "kiwisaver"
+    assert p.total_kiwisaver == 50_000

@@ -8,12 +8,29 @@ people:
     salary: 145000
     other_taxable_income: 1200      # bank interest, NZ dividends (non-PIE)
     current_pir: 0.28               # what your fund providers have on file (optional)
-    kiwisaver: {balance: 165000, employee_rate: 0.035, employer_rate: 0.035, fund_type: growth, fee_pct: 0.006}
+    # Retirement schemes. kind: kiwisaver (locked to 65) or workplace (paid out when you leave the job).
+    # Contributions: unit pct (amount 0.035 = 3.5% of salary) or $ per week|fortnight|month|year|six_months.
+    # Employer $ copied from a fund statement are usually after tax: set after_tax: true.
+    schemes:
+      - name: KiwiSaver
+        kind: kiwisaver
+        balance: 95000
+        fund_type: growth
+        fee_pct: 0.006
+        member: {amount: 0.06, unit: pct}
+        employer: {amount: 2400, unit: six_months, after_tax: true}
+      - name: Workplace savings scheme
+        kind: workplace
+        balance: 70000
+        fund_type: growth
+        fee_pct: 0.005
+        member: {amount: 110, unit: fortnight}
+        employer: {amount: 0.07, unit: pct}
   - name: Sam
     age: 42
     salary: 62000
     current_pir: 0.28
-    kiwisaver: {balance: 82000, employee_rate: 0.035, employer_rate: 0.035, fund_type: conservative, fee_pct: 0.009}
+    kiwisaver: {balance: 82000, employee_rate: 0.035, employer_rate: 0.035, fund_type: conservative, fee_pct: 0.009}  # short legacy form also works
 
 home_value: 1650000
 vehicles_and_other: 45000

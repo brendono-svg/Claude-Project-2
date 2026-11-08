@@ -18,14 +18,15 @@ def render(a: Analysis) -> str:
 
     out += ["## Where we are now", "", "| | |", "|---|---|",
             f"| Home | {m(p.home_value)} |",
-            f"| KiwiSaver | {m(p.total_kiwisaver)} |",
+            f"| KiwiSaver (locked to 65) | {m(p.total_kiwisaver)} |",
+            *([f"| Workplace savings (paid out on leaving) | {m(p.total_workplace)} |"] if p.total_workplace else []),
             f"| Investments | {m(p.total_investments)} |",
             f"| Cash | {m(p.total_cash)} |"]
     if p.other_property or p.vehicles_and_other:
         out.append(f"| Other assets | {m(p.other_property + p.vehicles_and_other)} |")
     out += [f"| Mortgage & debts | -{m(p.total_debt)} |",
             f"| **Net worth** | **{m(p.net_worth)}** |",
-            f"| Wealth outside the house & KiwiSaver | {m(p.liquid_wealth)} |", ""]
+            f"| Wealth you can use any time | {m(p.liquid_wealth)} |", ""]
 
     if a.monthly_income is not None:
         src = (f"from {a.budget.transactions} transactions over {a.budget.months} months"
@@ -66,7 +67,8 @@ def render(a: Analysis) -> str:
         r = a.retirement
         out += ["## Retirement projection (today's dollars)", "",
                 f"- Years to retirement: {r['years_to_retirement']}",
-                f"- KiwiSaver at retirement: {m(r['kiwisaver_projected'])}",
+                f"- KiwiSaver at 65: {m(r['kiwisaver_projected'])}",
+                f"- Workplace schemes at retirement: {m(r['workplace_projected'])}",
                 f"- Other investments (incl. redirected mortgage payment): {m(r['investments_projected'])}",
                 f"- NZ Super: {m(r['nz_super_annual'])}/yr",
                 f"- Sustainable income: about {m(r['sustainable_income'])}/yr vs target {m(r['income_target'])}/yr",

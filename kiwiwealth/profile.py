@@ -23,8 +23,41 @@ DEFAULT_ASSUMPTIONS = {
 }
 
 
+CONTRIBUTION_UNITS = {"pct": None, "week": 52, "fortnight": 26, "month": 12, "year": 1,
+                      "six_months": 2}
+SCHEME_KINDS = ("kiwisaver", "workplace")
+
+
 @dataclass
-class KiwiSaver:
+class Contribution:
+    """A contribution as a % of salary (unit "pct", amount 0.035) or a $ amount per period."""
+    amount: float = 0.0
+    unit: str = "pct"
+    after_tax: bool = False  # employer $ from a fund statement are usually after ESCT
+
+    def annual(self, salary: float) -> float:
+        mult = CONTRIBUTION_UNITS[self.unit]
+        return salary * self.amount if mult is None else self.amount * mult
+
+
+@dataclass
+class Scheme:
+    """A retirement savings scheme. KiwiSaver is locked until 65; a workplace
+    savings scheme usually pays out when you leave the employer."""
+    name: str = "KiwiSaver"
+    kind: str = "kiwisaver"
+    balance: float = 0.0
+    fund_type: str = "balanced"
+    fee_pct: float = 0.005
+    pie: bool = True  # non-PIE super schemes are taxed at 28%
+    vested_pct: float = 1.0  # share of the balance you keep if you leave now
+    voluntary_annual: float = 0.0  # one-off top-ups per year
+    member: Contribution = field(default_factory=Contribution)
+    employer: Contribution = field(default_factory=Contribution)
+
+
+@dataclass
+class KiwiSaver:  # legacy profile format; converted to a Scheme on load
     balance: float = 0.0
     employee_rate: float = 0.035
     employer_rate: float = 0.035
@@ -44,7 +77,7 @@ class Person:
     prior_year_pie_income: float | None = None  # defaults to this year's pie_income
     current_pir: float | None = None  # what's currently set with providers
     student_loan: bool = False
-    kiwisaver: KiwiSaver | None = None
+    schemes: list[Scheme] = field(default_factory=list)
 
     @property
     def taxable_income(self) -> float:
@@ -157,7 +190,11 @@ class Profile:
 
     @property
     def total_kiwisaver(self) -> float:
-        return sum(p.kiwisaver.balance for p in self.people if p.kiwisaver)
+        return sum(s.balance for p in self.people for s in p.schemes if s.kind == "kiwisaver")
+
+    @property
+    def total_workplace(self) -> float:
+        return sum(s.balance for p in self.people for s in p.schemes if s.kind == "workplace")
 
     @property
     def total_debt(self) -> float:
@@ -166,7 +203,8 @@ class Profile:
     @property
     def total_assets(self) -> float:
         return (self.home_value + self.other_property + self.vehicles_and_other
-                + self.total_cash + self.total_investments + self.total_kiwisaver)
+                + self.total_cash + self.total_investments + self.total_kiwisaver
+                + self.total_workplace)
 
     @property
     def net_worth(self) -> float:
@@ -174,7 +212,7 @@ class Profile:
 
     @property
     def liquid_wealth(self) -> float:
-        """Assets you could use before retirement (excludes home and KiwiSaver)."""
+        """Assets you can use any time (excludes home, KiwiSaver and workplace schemes)."""
         return self.total_cash + self.total_investments
 
     def person(self, name: str) -> Person | None:
@@ -206,10 +244,27 @@ def profile_from_dict(d: dict[str, Any]) -> Profile:
     for p in d.get("people", []):
         p = dict(p)
         ks = p.pop("kiwisaver", None)
+        schemes = p.pop("schemes", [])
         person = _build(Person, p)
-        if ks is not None:
-            person.kiwisaver = _build(KiwiSaver, ks)
-            _check(person.kiwisaver.fund_type, FUND_TYPES, "kiwisaver.fund_type")
+        for sc in schemes:
+            sc = dict(sc)
+            member, employer = sc.pop("member", None), sc.pop("employer", None)
+            scheme = _build(Scheme, sc)
+            scheme.member = _build(Contribution, member)
+            scheme.employer = _build(Contribution, employer)
+            _check(scheme.kind, SCHEME_KINDS, f"scheme {scheme.name!r} kind")
+            _check(scheme.fund_type, FUND_TYPES, f"scheme {scheme.name!r} fund_type")
+            for c in (scheme.member, scheme.employer):
+                _check(c.unit, tuple(CONTRIBUTION_UNITS), f"scheme {scheme.name!r} contribution unit")
+            person.schemes.append(scheme)
+        if ks is not None:  # legacy format
+            old = _build(KiwiSaver, ks)
+            _check(old.fund_type, FUND_TYPES, "kiwisaver.fund_type")
+            person.schemes.insert(0, Scheme(
+                name="KiwiSaver", kind="kiwisaver", balance=old.balance, fund_type=old.fund_type,
+                fee_pct=old.fee_pct, voluntary_annual=old.self_employed_annual,
+                member=Contribution(old.employee_rate, "pct"),
+                employer=Contribution(old.employer_rate, "pct")))
         people.append(person)
     if not people:
         raise ValueError("Profile needs at least one person")
