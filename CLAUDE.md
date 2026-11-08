@@ -11,7 +11,12 @@
   design decision). Skip for small, obvious edits.
 - After the same error happens twice (a hook will also remind you). Do not
   try a third variation of the same fix first.
-- Before declaring a multi-step task done.
+- Before declaring a multi-step task done. The done-check must:
+  - cover every file the task changed (`git diff --name-only` against the
+    starting point), not a hand-picked subset, and
+  - include one end-to-end run of anything that talks to an outside service
+    (storage, sync, an API, a connector), with its result as evidence. If it
+    can't be run from here, say so in the brief and to the user.
 Do not consult the advisor at any other time.
 
 ## Keep usage low

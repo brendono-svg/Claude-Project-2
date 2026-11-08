@@ -9,7 +9,10 @@ compact brief (aim for under 250 words) instead of pasting history:
 2. **Goal**: one sentence
 3. **Current approach or plan**: bullets
 4. **Evidence**: the exact error text, or the test/command output that shows status
-5. **Files**: the 1-5 paths the advisor should read (not the whole repo)
+5. **Files**: the 1-5 paths the advisor should read (not the whole repo).
+   For a done-check, list every changed file instead (`git diff --name-only`).
+   For a done-check, Evidence must also include the end-to-end run of any outside
+   service the change touches, or state plainly that it wasn't run and why.
 6. **Question**: the one decision you want judged
 
 Then:

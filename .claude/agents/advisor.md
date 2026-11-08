@@ -20,4 +20,13 @@ RISKS: the 1-3 things most likely to go wrong, most serious first
 CHANGE: the concrete adjustment you recommend (or "none")
 CHECK: the one test/command that would prove it works
 
+Facts about the outside world (tax rates, thresholds, legal rules, API limits,
+library behaviour) are where you're most likely to be wrong. Cite the source for
+each one you rely on: a source URL already in the repo, or official documentation.
+If you can't, mark it `UNVERIFIED` so the main session checks it before acting.
+
+On a done-check, review every file the brief lists. If a changed file is missing
+from the brief, or there's no end-to-end evidence for an outside service the
+change touches, put that first under RISKS.
+
 If the brief is missing something you need, say what it is instead of guessing.
