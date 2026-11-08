@@ -51,7 +51,7 @@ p { margin: 0; }
 .small { font-size: 0.85rem; }
 
 header.top { display: grid; gap: 6px; }
-.sync { justify-self: start; display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--muted); }
+.sync { justify-self: start; display: inline-flex; align-items: center; gap: 6px; font: 500 0.78rem var(--body); color: var(--muted); background: none; border: 0; padding: 4px 0; text-decoration: underline dotted; text-underline-offset: 3px; }
 .sync::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--later); }
 .sync[data-s="synced"]::before { background: var(--pounamu); }
 .sync[data-s="saving"]::before, .sync[data-s="loading"]::before { background: var(--kowhai); }
@@ -139,7 +139,8 @@ nav.tabs a[aria-current="page"] { color: var(--pounamu); }
   <header class="top">
     <span class="eyebrow">Kiwiwealth · NZ family planner</span>
     <h1 id="hh">Our plan</h1>
-    <span class="sync" id="sync" data-s="local" role="status">Saved on this phone</span>
+    <button type="button" class="sync" id="sync" data-s="loading" aria-controls="syncPanel">Connecting…</button>
+    <div class="card small" id="syncPanel" hidden></div>
     <div class="banner" id="exampleBanner" hidden>
       <span>These are <strong>example numbers</strong>. Enter yours in Details.</span>
       <button class="ghost" type="button" data-go="details">Enter ours</button>
@@ -517,47 +518,80 @@ try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); state = migrate
 const cacheLocal = () => { try { localStorage.setItem(KEY, JSON.stringify({ profile: state, csv: csvBudget })); } catch {} };
 
 /* ===== Sync: one shared household document, live between phones ===== */
-const SYNC_TEXT = { local: "Saved on this phone only", loading: "Connecting…", synced: "Synced across your phones", saving: "Saving…", offline: "Can't reach sync yet; changes are kept on this phone", readonly: "View only: you can't change these numbers", error: "" };
-function setSync(st, text) { const e = document.getElementById("sync"); if (!e) return; e.dataset.s = st; e.textContent = text || SYNC_TEXT[st]; }
-let hhDoc = null, canWrite = true, lastSent = null, writing = false, queued = false, saveTimer = null, firstSnap = false;
+const SYNC_TEXT = { local: "Not syncing: tap for details", loading: "Connecting…", synced: "Synced across your phones", saving: "Saving…", offline: "Not synced yet: tap for details", readonly: "View only: tap for details", error: "Sync problem: tap for details" };
+const sync = { available: false, canWrite: true, lastError: "", lastSynced: "", remoteUpdated: "" };
+function setSync(st, text) { const e = document.getElementById("sync"); if (!e) return; e.dataset.s = st; e.textContent = text || SYNC_TEXT[st]; renderSyncPanel(); }
+let hhDoc = null, lastSent = null, writing = false, queued = false, saveTimer = null, firstSnap = false;
+let dirty = false; try { dirty = localStorage.getItem(KEY + ".dirty") === "1"; } catch {}
+const setDirty = v => { dirty = v; try { v ? localStorage.setItem(KEY + ".dirty", "1") : localStorage.removeItem(KEY + ".dirty"); } catch {} };
 const payload = () => ({ profile: state, csv: csvBudget });
 async function flush() {
-  if (!hhDoc || !canWrite) return;
-  if (writing) { queued = true; return; }
+  if (!hhDoc || !sync.canWrite) return false;
+  if (writing) { queued = true; return false; }
   writing = true; setSync("saving");
   const body = payload(), json = JSON.stringify(body);
-  try { await hhDoc.set({ ...body, updatedAt: new Date().toISOString() }); lastSent = json; setSync("synced"); }
-  catch (e) {
-    if (e?.code === "invalid_argument") { canWrite = false; setSync("readonly"); }
-    else if (e?.code === "quota_exceeded") setSync("error", "Sync storage is full; changes are kept on this phone");
-    else setSync("offline");
+  let ok = false;
+  try {
+    await hhDoc.set({ ...JSON.parse(json), updatedAt: new Date().toISOString() });
+    lastSent = json; ok = true; sync.lastError = ""; sync.lastSynced = new Date().toLocaleString("en-NZ");
+    if (JSON.stringify(payload()) === json) setDirty(false);
+    setSync("synced");
+  } catch (e) {
+    sync.lastError = (e?.code || "unknown") + (e?.message ? ": " + e.message : "");
+    if (e?.code === "invalid_argument" || e?.code === "not_granted") { sync.canWrite = false; setSync("readonly"); }
+    else setSync(e?.code === "quota_exceeded" ? "error" : "offline");
   } finally { writing = false; if (queued) { queued = false; flush(); } }
+  return ok;
 }
-function save() { cacheLocal(); if (!hhDoc || !canWrite) return; clearTimeout(saveTimer); setSync("saving"); saveTimer = setTimeout(flush, 700); }
+function save() { cacheLocal(); setDirty(true); if (!hhDoc || !sync.canWrite) { setSync(hhDoc ? "readonly" : sync.available ? "loading" : "local"); return; } clearTimeout(saveTimer); setSync("saving"); saveTimer = setTimeout(flush, 700); }
+function renderSyncPanel() {
+  const box = document.getElementById("syncPanel"); if (!box || box.hidden) return;
+  const why = !sync.available
+    ? "This view of the page can't reach shared storage, so changes stay on this phone only. Open the link in your phone's web browser while signed in to claude.ai, or update the Claude app, then reload."
+    : !sync.canWrite ? "You can see the shared numbers but your access is view-only. The owner needs to share the page with you as Editor (or Contributor)."
+    : sync.lastError ? "The last upload didn't go through. Your changes are kept on this phone and will be sent when sync works." : "Sync is working.";
+  box.innerHTML = `<p>${why}</p><dl class="kv small">
+    <dt>Shared storage</dt><dd>${sync.available ? "available" : "not available"}</dd>
+    <dt>Can save</dt><dd>${sync.available ? (sync.canWrite ? "yes" : "no") : "—"}</dd>
+    <dt>Unsynced changes here</dt><dd>${dirty ? "yes" : "no"}</dd>
+    <dt>Last upload from here</dt><dd>${sync.lastSynced || "—"}</dd>
+    <dt>Shared copy updated</dt><dd>${sync.remoteUpdated ? new Date(sync.remoteUpdated).toLocaleString("en-NZ") : "none yet"}</dd>
+    ${sync.lastError ? `<dt>Error</dt><dd style="white-space:normal;text-align:right">${esc(sync.lastError)}</dd>` : ""}</dl>
+    ${sync.available && sync.canWrite && !state.example ? `<button type="button" id="pushNow">Send this phone's numbers to every phone</button>` : ""}
+    <p class="small muted" id="pushMsg" role="status"></p>`;
+}
+document.addEventListener("click", async e => {
+  if (e.target.id === "sync") { const b = el("syncPanel"); b.hidden = !b.hidden; renderSyncPanel(); }
+  if (e.target.id === "pushNow") { const ok = await flush(); const m = el("pushMsg"); if (m) m.textContent = ok ? "Sent. Other phones update within a few seconds (reload them if not)." : "Couldn't send. See the error above."; }
+});
 async function startSync() {
   let db = null;
-  try { db = await window.claude?.use?.("db"); } catch {}
+  try { db = await window.claude?.use?.("db"); } catch (e) { sync.lastError = "use(db): " + (e?.code || e?.message || e); }
   if (!db) { setSync("local"); return; }
-  try { const u = await window.claude.use("user"); if ((await u?.can("data.write")) === false) { canWrite = false; } } catch {}
+  sync.available = true;
+  try { const u = await window.claude.use("user"); if ((await u?.can("data.write")) === false) sync.canWrite = false; } catch {}
   hhDoc = db.doc("household/main");
-  setSync("loading");
-  const timer = setTimeout(() => { if (!firstSnap) setSync("offline"); }, 10000);
+  setSync(sync.canWrite ? "loading" : "readonly");
+  const timer = setTimeout(() => { if (!firstSnap) { sync.lastError ||= "No answer from shared storage after 10 seconds"; setSync("offline"); } }, 10000);
   hhDoc.onSnapshot(snap => {
     if (snap.metadata.fromCache && !snap.exists) return; // wait for the store's answer
     if (!snap.metadata.fromCache) { firstSnap = true; clearTimeout(timer); }
     if (snap.exists) {
       const d = snap.data(), json = JSON.stringify({ profile: d.profile, csv: d.csv ?? null });
-      if (json !== JSON.stringify(payload()) && json !== lastSent && d.profile?.people) {
+      sync.remoteUpdated = d.updatedAt || "";
+      if (dirty && !snap.metadata.fromCache && json !== JSON.stringify(payload()) && json !== lastSent) {
+        flush(); // this phone has edits the shared copy hasn't seen: send them
+      } else if (json !== JSON.stringify(payload()) && json !== lastSent && d.profile?.people) {
         state = migrate(clone(d.profile)); csvBudget = d.csv ? clone(d.csv) : null; cacheLocal();
         const editing = el("view-details").contains(document.activeElement) && !el("view-details").hidden;
         refresh(!editing);
       }
-      if (!snap.metadata.hasPendingWrites && !writing) setSync(canWrite ? "synced" : "readonly");
+      if (!snap.metadata.hasPendingWrites && !writing) setSync(sync.canWrite ? (dirty ? "offline" : "synced") : "readonly");
     } else if (!snap.metadata.fromCache) {
       // Nothing shared yet: upload what this phone has, unless it's only the example.
-      if (!state.example && canWrite) flush(); else setSync(canWrite ? "synced" : "readonly", canWrite ? "Ready to sync. Enter your numbers in Details" : SYNC_TEXT.readonly);
+      if (!state.example && sync.canWrite) flush(); else setSync(sync.canWrite ? "synced" : "readonly", sync.canWrite ? "Ready to sync. Enter your numbers in Details" : SYNC_TEXT.readonly);
     }
-  }, err => { clearTimeout(timer); setSync(err?.code === "revoked" ? "readonly" : "offline"); });
+  }, err => { clearTimeout(timer); sync.lastError = "listener: " + (err?.code || "unknown"); setSync(err?.code === "revoked" ? "readonly" : "offline"); });
 }
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const el = id => document.getElementById(id);
