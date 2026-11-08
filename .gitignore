@@ -1,0 +1,7 @@
+# Real family data and generated reports stay on your machine
+my-data/
+reports/
+*.private.yaml
+__pycache__/
+.pytest_cache/
+*.egg-info/

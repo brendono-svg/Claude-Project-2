@@ -1,0 +1,62 @@
+# Example household. Copy to my-data/profile.yaml (git-ignored) and replace with your numbers.
+# Rates are decimals: 0.035 = 3.5%.
+household: The Example whānau
+
+people:
+  - name: Alex
+    age: 44
+    salary: 145000
+    other_taxable_income: 1200      # bank interest, NZ dividends (non-PIE)
+    current_pir: 0.28               # what your fund providers have on file (optional)
+    kiwisaver: {balance: 165000, employee_rate: 0.035, employer_rate: 0.035, fund_type: growth, fee_pct: 0.006}
+  - name: Sam
+    age: 42
+    salary: 62000
+    current_pir: 0.28
+    kiwisaver: {balance: 82000, employee_rate: 0.035, employer_rate: 0.035, fund_type: conservative, fee_pct: 0.009}
+
+home_value: 1650000
+vehicles_and_other: 45000
+dependants: 2
+has_wills: true
+has_income_protection: false
+
+cash:
+  - {name: Everyday + on-call savings, balance: 18000, interest_rate: 0.025}
+  - {name: Term deposit, balance: 20000, interest_rate: 0.042}
+
+holdings:
+  - {name: Global index fund (PIE), owner: joint, type: pie, value: 32000, cost: 26000, fund_type: aggressive, fee_pct: 0.003, monthly_contribution: 400}
+  - {name: NZ shares (direct), owner: Alex, type: nz_listed, value: 9000, cost: 7500, fund_type: aggressive, fee_pct: 0.0, single_company: false}
+  - {name: US shares (direct), owner: Alex, type: direct_offshore, value: 44000, cost: 41500, fund_type: aggressive, fee_pct: 0.0, single_company: false}
+
+mortgage:
+  balance: 68000
+  rate: 0.0495
+  monthly_repayment: 3200
+  kind: table                       # table | revolving | offset
+  fixed_until: "2027-03"
+
+debts: []                           # e.g. {name: Credit card, balance: 2500, rate: 0.2095, monthly_payment: 300}
+
+goals:
+  - {name: Family trip to Europe, target_amount: 25000, target_year: 2028, saved_so_far: 6000, priority: 2}
+  - {name: Kids' university fund, target_amount: 60000, target_year: 2036, saved_so_far: 5000, priority: 1}
+  - {name: Car replacement, target_amount: 30000, target_year: 2030, saved_so_far: 0, priority: 2}
+
+# Used only when no budget CSV is passed. Run `python -m kiwiwealth budget <csv>` to get these.
+budget:
+  monthly_net_income: 13400
+  monthly_spending: 9800
+  source: estimate
+
+preferences:
+  risk_tolerance: growth            # conservative | balanced | growth | aggressive
+  preferred_vehicles: [managed_funds, shares]
+  retirement_age: 62
+  retirement_income_target: 85000   # per year for the household, in today's dollars
+  max_single_share_pct: 0.10
+
+# Optional overrides of planning assumptions (see kiwiwealth/profile.py)
+assumptions:
+  inflation: 0.02
