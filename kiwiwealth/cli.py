@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     rp = sub.add_parser("report", help="Build the full financial plan")
-    rp.add_argument("profile")
+    rp.add_argument("profile", help="YAML profile, or the phone app's copied data saved as .json")
     rp.add_argument("--budget", nargs="*", default=[], help="Transaction CSV export(s)")
     rp.add_argument("-o", "--output", help="Write Markdown here instead of stdout")
 

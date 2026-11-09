@@ -18,7 +18,9 @@ action plan, written as a Markdown report. It covers:
 - **Investment plan:** core low-fee PIE funds plus a small satellite of shares,
   concentration and fee checks
 - **Goals:** monthly amount needed per goal, with cash, balanced or growth matched to the timeframe
-- **Retirement:** KiwiSaver plus investments plus NZ Super, in today's dollars, and the gap
+- **Retirement:** a month-by-month simulation to age 95 in today's dollars. Each person has their own
+  retirement age, KiwiSaver stays locked until 65, workplace schemes pay out on leaving, and NZ Super
+  starts at each person's 65. It reports the income your savings can support and when reachable money runs out
 - **Downsizing scenario** for a large house, plus protection (wills, income cover)
 
 > General information for our own use, not regulated financial advice. Offering it to
@@ -32,7 +34,11 @@ mkdir -p my-data && cp examples/profile.example.yaml my-data/profile.yaml   # my
 python -m kiwiwealth budget path/to/transactions.csv          # check the budget import
 python -m kiwiwealth report my-data/profile.yaml --budget path/to/transactions.csv -o my-data/plan.md
 python -m pytest -q
+node scripts/check_app_engine.js      # phone app engine vs Python on tests/parity_cases.json
 ```
+
+To run the Python report on the phone app's data, use **Details → Copy my data** in the app, save it as
+`my-data/app.json`, and run `python -m kiwiwealth report my-data/app.json`.
 
 Try it with the examples: `python -m kiwiwealth report examples/profile.example.yaml --budget examples/budget-export.example.csv`
 
@@ -43,7 +49,7 @@ Rows categorised as `Transfer` are left out. Give that category to moves between
 
 ### Phone app
 
-`app/kiwiwealth.html` is the same engine ported to a single offline page for phones. It has tabs for the plan, future projections, budget CSV import and details. It syncs one shared household record between everyone the page is shared with as Contributor or Editor (view-only people cannot read it), and keeps a local copy so it still works offline. Keep `advice.py` and the page's engine script in step when changing rules.
+`app/kiwiwealth.html` is the same engine ported to a single offline page for phones. It has tabs for the plan, future projections, budget CSV import and details. It syncs one shared household record between everyone the page is shared with as Contributor or Editor (view-only people cannot read it), and keeps a local copy so it still works offline. When you change a rule, change it in both engines, run `python scripts/update_parity.py`, and make `node scripts/check_app_engine.js` pass. CI runs both.
 
 ### Layout
 
@@ -54,6 +60,7 @@ Rows categorised as `Transfer` are left out. Give that category to moves between
 | `kiwiwealth/budget_import.py` | CSV import and savings-habit summary |
 | `kiwiwealth/projections.py` | Compounding, goal, mortgage and after-tax return maths |
 | `kiwiwealth/advice.py` | Rule engine: one function per rule, ranked output |
+| `kiwiwealth/retirement.py` | Month-by-month retirement simulation (mirrored in the phone app) |
 | `kiwiwealth/report.py`, `cli.py` | Markdown report and command line |
 
 To update a rule after a Budget, add a new dated entry in `nz_rules.py` and leave the old ones in place.

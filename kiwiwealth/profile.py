@@ -19,6 +19,8 @@ DEFAULT_ASSUMPTIONS = {
     "taxable_yield": {"cash": None, "conservative": 0.04, "balanced": 0.045,
                       "growth": 0.048, "aggressive": 0.05},
     "safe_withdrawal_rate": 0.04,
+    "plan_to_age": 95,          # the simulation runs until the youngest person reaches this
+    "nz_super_age": None,       # None = current law (65); set higher to stress-test
     "emergency_fund_months": 4,
 }
 
@@ -78,6 +80,7 @@ class Person:
     current_pir: float | None = None  # what's currently set with providers
     student_loan: bool = False
     schemes: list[Scheme] = field(default_factory=list)
+    retirement_age: int | None = None  # None = preferences.retirement_age
 
     @property
     def taxable_income(self) -> float:
@@ -300,6 +303,83 @@ def profile_from_dict(d: dict[str, Any]) -> Profile:
     )
 
 
+
+# ---------------------------------------------------------------------------
+# Phone app data ("Copy my data" in app/kiwiwealth.html, or the synced record)
+# ---------------------------------------------------------------------------
+
+
+def _blank_none(v):
+    return None if v in ("", None) else v
+
+
+def profile_from_app_state(state: dict[str, Any]) -> Profile:
+    """Convert the phone app's JSON into a Profile, so both engines can run on the same data."""
+    prefs = state.get("prefs", {})
+    names = {p["name"] for p in state.get("people", [])}
+    people = []
+    for p in state.get("people", []):
+        people.append({
+            "name": p["name"], "age": int(p.get("age") or 0), "salary": p.get("salary") or 0,
+            "other_taxable_income": p.get("other") or 0, "pie_income": p.get("pie") or 0,
+            "prior_year_taxable_income": _blank_none(p.get("priorTaxable")),
+            "prior_year_pie_income": _blank_none(p.get("priorPie")),
+            "current_pir": _blank_none(p.get("currentPir")), "student_loan": bool(p.get("sl")),
+            "retirement_age": _blank_none(p.get("retireAge")),
+            "schemes": [{
+                "name": s.get("name", "Scheme"), "kind": s.get("kind", "kiwisaver"),
+                "balance": s.get("balance") or 0, "fund_type": s.get("fund", "balanced"),
+                "fee_pct": s.get("fee") or 0, "pie": s.get("pie", True) is not False,
+                "vested_pct": 1 if s.get("vested") in ("", None) else s["vested"],
+                "voluntary_annual": s.get("voluntary") or 0,
+                "member": {"amount": (s.get("member") or {}).get("amount") or 0,
+                           "unit": (s.get("member") or {}).get("unit", "pct")},
+                "employer": {"amount": (s.get("employer") or {}).get("amount") or 0,
+                             "unit": (s.get("employer") or {}).get("unit", "pct"),
+                             "after_tax": bool((s.get("employer") or {}).get("afterTax"))},
+            } for s in p.get("schemes", [])],
+        })
+    mort = state.get("mortgage", {})
+    budget = state.get("budget", {})
+    return profile_from_dict({
+        "household": state.get("household", "Our household"),
+        "people": people,
+        "home_value": state.get("home") or 0, "vehicles_and_other": state.get("other") or 0,
+        "dependants": state.get("dependants") or 0,
+        "has_wills": bool(state.get("wills")), "has_income_protection": bool(state.get("incomeCover")),
+        "cash": [{"name": c.get("name", "Cash"), "balance": c.get("balance") or 0,
+                  "interest_rate": c.get("rate") or 0, "is_emergency_fund": bool(c.get("emergency"))}
+                 for c in state.get("cash", [])],
+        "holdings": [{"name": h.get("name", "Holding"),
+                      "owner": h.get("owner") if h.get("owner") in names else "joint",
+                      "type": h.get("type", "pie"), "value": h.get("value") or 0, "cost": h.get("cost") or 0,
+                      "fee_pct": h.get("fee") or 0, "monthly_contribution": h.get("monthly") or 0,
+                      "single_company": bool(h.get("single"))} for h in state.get("holdings", [])],
+        "mortgage": {"balance": mort.get("balance") or 0, "rate": mort.get("rate") or 0,
+                     "monthly_repayment": mort.get("repayment") or 0, "kind": mort.get("kind", "table"),
+                     "revolving_limit": mort.get("limit") or 0},
+        "debts": [{"name": d.get("name", "Debt"), "balance": d.get("balance") or 0, "rate": d.get("rate") or 0}
+                  for d in state.get("debts", [])],
+        "goals": [{"name": g.get("name", "Goal"), "target_amount": g.get("target") or 0,
+                   "target_year": int(g.get("year") or 0), "saved_so_far": g.get("saved") or 0,
+                   "priority": int(g.get("priority") or 2)} for g in state.get("goals", [])],
+        "budget": {"monthly_net_income": _blank_none(budget.get("income")),
+                   "monthly_spending": _blank_none(budget.get("spending"))},
+        "preferences": {"risk_tolerance": prefs.get("risk", "growth"),
+                        "preferred_vehicles": ["managed_funds"] + (["shares"] if prefs.get("shares") else []),
+                        "retirement_age": int(prefs.get("retireAge") or 65),
+                        "retirement_income_target": prefs.get("target") or 0,
+                        "max_single_share_pct": prefs.get("maxShare") or 0.10},
+    })
+
+
 def load_profile(path: str | Path) -> Profile:
+    """Load a YAML profile, or the phone app's JSON (a file ending in .json)."""
+    path = Path(path)
     with open(path, encoding="utf-8") as f:
+        if path.suffix == ".json":
+            import json
+            data = json.load(f)
+            data = data.get("data", data)            # a raw synced record
+            return profile_from_app_state(data.get("profile", data))
         return profile_from_dict(yaml.safe_load(f) or {})

@@ -30,3 +30,17 @@ def test_after_tax_return():
     assert after_tax_return(0.04, 0.0, 0.28) == pytest.approx(0.0288)
     # PIE growth fund: only the taxable yield is taxed
     assert after_tax_return(0.07, 0.004, 0.28, 0.048) == pytest.approx(0.07 - 0.004 - 0.01344)
+
+
+def test_simulation_basics():
+    from kiwiwealth.retirement import SimPerson, SimScheme, simulate
+    args = dict(invested=500_000, monthly_invest=0, mortgage_months=0, mortgage_repayment=0,
+                r_grow=0.0, r_draw=0.0, super_age=65, super_per_person=25_000, plan_age=95)
+    # Retired at 65 with $500k at 0% real: $25k Super + $20k from savings lasts 25 years, to age 90.
+    r = simulate([SimPerson(65, 65, 0)], target=45_000, **args)
+    assert r.first_short == 25 * 12 and r.short_total == pytest.approx(20_000 * 5, rel=1e-6)
+    # Locked KiwiSaver can't fund the years before 65; unlocked it can.
+    young = [SimPerson(60, 60, 0, [SimScheme("kiwisaver", 400_000, 0.0, 0)])]
+    args["invested"] = 50_000
+    assert simulate(young, target=40_000, **args).first_short == 15
+    assert simulate(young, target=40_000, lock=False, **args).first_short > 15 * 12

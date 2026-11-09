@@ -103,8 +103,13 @@ def test_pir_uses_prior_year_pie_income():
 
 
 def test_bridge_before_kiwisaver_access():
-    p = base(preferences={"retirement_age": 55, "retirement_income_target": 80_000})
-    assert any("needs savings outside KiwiSaver" in t for t in titles(analyse(p, on=ON)))
+    # Plenty in KiwiSaver, little outside it, retiring at 55: the reachable money runs out first.
+    p = base(people=[{"name": "A", "age": 50, "salary": 120_000,
+                      "kiwisaver": {"balance": 900_000, "employee_rate": 0.035, "fund_type": "growth"}}],
+             preferences={"retirement_age": 55, "retirement_income_target": 60_000})
+    a = analyse(p, on=ON)
+    assert a.retirement["locked_problem"] is True
+    assert any("runs out before KiwiSaver opens" in t for t in titles(a))
 
 
 def two_schemes(**prefs):
@@ -149,7 +154,43 @@ def test_legacy_kiwisaver_field_still_loads():
     assert p.total_kiwisaver == 50_000
 
 
-def test_example_projection_matches_phone_app_check():
-    # scripts/check_app_engine.js expects these same figures from the phone page's engine.
-    r = analyse(load_profile(EXAMPLES / "profile.example.yaml"), on=ON).retirement
-    assert (r["kiwisaver_projected"], r["workplace_projected"], r["investments_projected"]) == (717_773, 354_401, 1_073_195)
+def test_parity_cases_match_python_engine():
+    """tests/parity_cases.json is also run through the phone app's engine by
+    scripts/check_app_engine.js, so this keeps the two engines in step."""
+    import json
+    import sys
+    sys.path.insert(0, str(EXAMPLES.parent / "scripts"))
+    from update_parity import expected
+    cases = json.loads((EXAMPLES.parent / "tests" / "parity_cases.json").read_text())
+    assert len(cases) >= 5
+    for c in cases:
+        assert expected(c["state"], date.fromisoformat(c["on"])) == c["expected"], c["name"]
+
+
+def test_per_person_retirement_age_and_super():
+    # 9-year age gap: the younger partner keeps working, and gets no NZ Super until their own 65.
+    couple = lambda younger_retires: base(  # noqa: E731
+        people=[{"name": "Old", "age": 60, "salary": 100_000, "retirement_age": 62,
+                 "kiwisaver": {"balance": 300_000, "employee_rate": 0.035}},
+                {"name": "Young", "age": 51, "salary": 80_000, "retirement_age": younger_retires,
+                 "kiwisaver": {"balance": 100_000, "employee_rate": 0.035}}],
+        preferences={"retirement_income_target": 80_000})
+    both_stop = analyse(couple(53), on=ON).retirement      # Young stops when Old does
+    young_works = analyse(couple(62), on=ON).retirement
+    assert young_works["sustainable_income"] > both_stop["sustainable_income"]
+    assert both_stop["nz_super_annual"] == 44_412
+
+
+def test_app_json_loads(tmp_path):
+    import json
+    cases = json.loads((EXAMPLES.parent / "tests" / "parity_cases.json").read_text())
+    f = tmp_path / "data.json"
+    f.write_text(json.dumps({"profile": cases[1]["state"], "csv": None}))
+    p = load_profile(f)
+    assert [x.name for x in p.people] == ["Kahu", "Mere"] and p.people[0].retirement_age == 55
+    assert p.people[0].schemes[1].kind == "workplace" and p.people[0].schemes[1].pie is False
+
+
+def test_low_interest_cash_flagged():
+    p = base(cash=[{"name": "Savings", "balance": 30_000, "interest_rate": 0.0}])
+    assert any("cash is earning very little" in t for t in titles(analyse(p, on=ON)))

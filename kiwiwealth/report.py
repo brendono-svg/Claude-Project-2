@@ -1,7 +1,7 @@
 """Markdown report."""
 from __future__ import annotations
 
-from .advice import PRIORITY_LABELS, Analysis, m, pct
+from .advice import PRIORITY_LABELS, Analysis, m, pct, scheme_flows
 from .nz_rules import RULES
 
 DISCLAIMER = (
@@ -63,17 +63,27 @@ def render(a: Analysis) -> str:
                 f"{g['suggested_fund']} | {m(g['monthly_needed'])} |" for g in a.goals]
         out.append("")
 
+    flows = [(x, f) for x in p.people for f in scheme_flows(x, a.on)]
+    if flows:
+        out += ["## Retirement schemes", "", "| Scheme | Access | Balance | You/yr | Employer/yr (after tax) | Govt/yr |",
+                "|---|---|---|---|---|---|"]
+        out += [f"| {x.name}: {f.scheme.name} | {'At 65' if f.scheme.kind == 'kiwisaver' else 'On leaving job'} | "
+                f"{m(f.scheme.balance)} | {m(f.member)} | {m(f.employer_net)} | {m(f.govt)} |" for x, f in flows]
+        out.append("")
+
     if a.retirement:
         r = a.retirement
         out += ["## Retirement projection (today's dollars)", "",
-                f"- Years to retirement: {r['years_to_retirement']}",
-                f"- KiwiSaver at 65: {m(r['kiwisaver_projected'])}",
-                f"- Workplace schemes at retirement: {m(r['workplace_projected'])}",
-                f"- Other investments (incl. redirected mortgage payment): {m(r['investments_projected'])}",
-                f"- NZ Super: {m(r['nz_super_annual'])}/yr",
-                f"- Sustainable income: about {m(r['sustainable_income'])}/yr vs target {m(r['income_target'])}/yr",
-                f"- Assumes {pct(r['real_return_used'])} real return after fees and tax, "
-                f"{pct(r['inflation'])} inflation, {pct(p.assumption('safe_withdrawal_rate'))} withdrawal rate", ""]
+                f"- {r['first_to_retire']} stops work in {r['years_to_retirement']} years. Savings then:",
+                f"  - KiwiSaver (locked until 65): {m(r['kiwisaver_projected'])}",
+                f"  - Workplace schemes: {m(r['workplace_projected'])}",
+                f"  - Investments (incl. redirected mortgage payment): {m(r['investments_projected'])}",
+                f"- NZ Super once everyone is 65: {m(r['nz_super_annual'])}/yr",
+                f"- Income your savings can support to age {r['plan_to_age']}: about "
+                f"{m(r['sustainable_income'])}/yr vs target {m(r['income_target'])}/yr",
+                f"- Assumes {pct(r['real_return_used'])} real return after fees and tax while saving, "
+                f"{pct(r['drawdown_return_used'])} once drawing down, {pct(r['inflation'])} inflation. A partner "
+                "still working covers spending from their pay; pay above the target isn't counted as saved.", ""]
 
     out += ["## Sources for NZ rules", ""]
     out += [f"- {name.replace('_', ' ')}: {rule.source}" for name, rule in RULES.items()]

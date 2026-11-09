@@ -28,6 +28,7 @@ people:
         employer: {amount: 0.07, unit: pct}
   - name: Sam
     age: 42
+    # retirement_age: 60           # optional per person; otherwise preferences.retirement_age
     salary: 62000
     current_pir: 0.28
     kiwisaver: {balance: 82000, employee_rate: 0.035, employer_rate: 0.035, fund_type: conservative, fee_pct: 0.009}  # short legacy form also works

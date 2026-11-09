@@ -109,10 +109,13 @@ RULES: dict[str, Rule] = {
         note="The main home is usually excluded.",
     ),
     "nz_super": Rule(
-        history=((date(2025, 4, 1), {"age": 65, "couple_annual_net": 41_409,
-                                      "single_living_alone_annual_net": 26_916}),),
+        # Net at tax code M. Weekly $555.15 single living alone; $427.04 each for a couple.
+        history=((date(2026, 4, 1), {"age": 65, "couple_annual_net": 44_412.16,
+                                      "single_living_alone_annual_net": 28_867.80}),),
         source="https://www.workandincome.govt.nz/eligibility/seniors/superannuation/payment-rates.html",
-        note="Net rates at M tax code; adjusted every 1 April.",
+        note="Adjusted every 1 April. 2026 figures taken from secondary sources that reproduce "
+             "Work and Income's table; confirm against the source link. A partner under 65 "
+             "gets nothing until they qualify; the qualifying partner gets half the couple rate.",
     ),
 }
 

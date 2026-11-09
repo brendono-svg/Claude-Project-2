@@ -55,7 +55,7 @@ header.top { display: grid; gap: 6px; }
 .sync::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--later); }
 .sync[data-s="synced"]::before { background: var(--pounamu); }
 .sync[data-s="saving"]::before, .sync[data-s="loading"]::before { background: var(--kowhai); }
-.sync[data-s="error"]::before, .sync[data-s="readonly"]::before { background: var(--now); }
+.sync[data-s="error"]::before, .sync[data-s="readonly"]::before, .sync[data-s="conflict"]::before { background: var(--now); }
 .banner { background: var(--soon-bg); color: var(--ink); border-radius: 10px; padding: 10px 12px; font-size: 0.88rem; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .banner button { flex: none; }
 
@@ -142,8 +142,8 @@ nav.tabs a[aria-current="page"] { color: var(--pounamu); }
     <button type="button" class="sync" id="sync" data-s="loading" aria-controls="syncPanel">Connecting…</button>
     <div class="card small" id="syncPanel" hidden></div>
     <div class="banner" id="exampleBanner" hidden>
-      <span>These are <strong>example numbers</strong>. Enter yours in Details.</span>
-      <button class="ghost" type="button" data-go="details">Enter ours</button>
+      <span>These are <strong>example numbers</strong>, not yours.</span>
+      <button class="ghost" type="button" id="startBlank">Start with our numbers</button>
     </div>
   </header>
 
@@ -181,7 +181,7 @@ const NZ = {
   fif: { src: "https://www.ird.govt.nz/income-tax/income-tax-for-individuals/types-of-individual-income/overseas-income/foreign-investment-funds-fifs",
     h: [["2007-04-01", { de_minimis: 50000, fdr: .05 }]] },
   nz_super: { src: "https://www.workandincome.govt.nz/eligibility/seniors/superannuation/payment-rates.html",
-    h: [["2025-04-01", { age: 65, couple: 41409, single: 26916 }]] },
+    h: [["2026-04-01", { age: 65, couple: 44412.16, single: 28867.80 }]] },
 };
 const iso = d => d.toISOString().slice(0, 10);
 function rule(name, on) { let v; for (const [s, x] of NZ[name].h) if (s <= iso(on)) v = x; return v; }
@@ -229,6 +229,9 @@ function migrate(P) {
     if (!Array.isArray(p.schemes)) p.schemes = p.ks ? [{ name: "KiwiSaver", kind: "kiwisaver", balance: +p.ksBalance || 0, fund: p.ksFund || "balanced", fee: +p.ksFee || 0, pie: true, vested: 1, voluntary: +p.ksVoluntary || 0, member: { amount: +p.ksEmp || 0, unit: "pct" }, employer: { amount: +p.ksEmployer || 0, unit: "pct", afterTax: false } }] : [];
     for (const k of ["ks", "ksBalance", "ksEmp", "ksEmployer", "ksVoluntary", "ksFund", "ksFee"]) delete p[k];
   }
+  // A holding whose owner isn't a current person (a deleted person, or a leftover example name) becomes joint.
+  const names = new Set((P?.people || []).map(p => p.name));
+  for (const h of P?.holdings || []) if (h.owner !== "joint" && !names.has(h.owner)) h.owner = "joint";
   return P;
 }
 
@@ -240,13 +243,56 @@ function totalInterest(b, rate, pay) { const n = monthsToRepay(b, rate, pay); if
 const afterTax = (g, fee, t, ty) => g - fee - t * (ty == null ? g : Math.min(ty, g));
 const realRate = (n, i) => (1 + n) / (1 + i) - 1;
 
+/* ===== Retirement simulation. Mirrors kiwiwealth/retirement.py line for line ===== */
+function simulate(o) {
+  const people = o.people, lock = o.lock !== false, extra = o.extraMonthly || 0;
+  const total = Math.max(o.planAge - Math.min(...people.map(p => p.age)), 0) * 12;
+  const retireM = people.map(p => Math.max(p.retireAge - p.age, 0) * 12), superM = people.map(p => Math.max(o.superAge - p.age, 0) * 12);
+  const drawStart = Math.min(...retireM);
+  const bal = people.map(p => p.schemes.map(s => s.balance));
+  let acc = o.invested, firstShort = null, shortTotal = 0, atRet = { ks: 0, wp: 0, acc: 0 };
+  const series = [];
+  const pots = () => { let ks = 0, wp = 0; people.forEach((p, i) => p.schemes.forEach((s, j) => { if (s.kind === "kiwisaver") ks += bal[i][j]; else wp += bal[i][j]; })); return [ks, wp]; };
+  for (let t = 0; t <= total; t++) {
+    const working = retireM.map(rm => t < rm), over = superM.map(sm => t >= sm);
+    if (t === drawStart) { const [ks, wp] = pots(); atRet = { ks, wp, acc }; }
+    people.forEach((p, i) => p.schemes.forEach((s, j) => {
+      const free = s.kind === "kiwisaver" ? (over[i] || (!lock && !working[i])) : !working[i];
+      if (free && bal[i][j]) { acc += bal[i][j]; bal[i][j] = 0; }
+    }));
+    if (t % 12 === 0) { const [ks, wp] = pots(); series.push({ yearIndex: t / 12, ks, wp, acc }); }
+    if (t === total) break;
+    people.forEach((p, i) => p.schemes.forEach((s, j) => {
+      const locked = s.kind === "kiwisaver" ? !(over[i] || (!lock && !working[i])) : working[i];
+      const paying = s.kind === "kiwisaver" ? working[i] && !over[i] : working[i];
+      if (locked) bal[i][j] = bal[i][j] * (1 + s.rate / 12) + (paying ? s.contribution / 12 : 0);
+    }));
+    const mortgageOpen = o.mortgageMonths == null || t < o.mortgageMonths;
+    if (t < drawStart) {
+      acc = acc * (1 + o.rGrow / 12) + o.monthlyInvest + extra;
+      if (!mortgageOpen) acc += o.mortgageRepayment;
+    } else {
+      acc *= 1 + o.rDraw / 12;
+      let need = o.target / 12 + (mortgageOpen ? o.mortgageRepayment : 0);
+      people.forEach((p, i) => { if (working[i]) need -= p.netPay / 12; });
+      over.forEach(ov => { if (ov) need -= o.superPerPerson / 12; });
+      if (need > 0) {
+        if (acc + 1e-6 >= need) acc = Math.max(acc - need, 0);
+        else { shortTotal += need - acc; acc = 0; if (firstShort == null) firstShort = t; }
+      }
+    }
+  }
+  return { drawStart, atRet, firstShort, shortTotal, endBalance: acc, series };
+}
+function bisect(ok, lo, hi, n = 40) { for (let i = 0; i < n; i++) { const mid = (lo + hi) / 2; if (ok(mid)) lo = mid; else hi = mid; } return lo; }
+
 const FUNDS = ["cash", "conservative", "balanced", "growth", "aggressive"];
-const ASSUME = { inflation: .02, swr: .04, efMonths: 4,
+const ASSUME = { inflation: .02, swr: .04, efMonths: 4, planAge: 95, superAge: null, highFee: .006, lowFee: .0035,
   returns: { cash: .035, conservative: .045, balanced: .06, growth: .07, aggressive: .075 },
   ty: { cash: null, conservative: .04, balanced: .045, growth: .048, aggressive: .05 } };
 const PRIORITY = { 1: "Do now", 2: "Do soon", 3: "Worth doing", 4: "Keep in mind" };
-const $ = x => (x < 0 ? "-$" : "$") + Math.round(Math.abs(x)).toLocaleString("en-NZ");
-const pc = (x, dp = 1) => (x * 100).toFixed(dp) + "%";
+const $ = x => (x < 0 ? "-$" : "$") + Math.floor(Math.abs(x) + .5).toLocaleString("en-NZ");
+const pc = (x, dp = 1) => (Math.floor(x * 100 * 10 ** dp + .5 + 1e-9) / 10 ** dp).toFixed(dp) + "%";
 
 /* ===== Rules engine. Mirrors kiwiwealth/advice.py ===== */
 function analyse(P, budget, on = new Date()) {
@@ -261,8 +307,9 @@ function analyse(P, budget, on = new Date()) {
   const cash = sum(P.cash, c => c.balance), inv = sum(P.holdings, h => h.value), ks = sum(allSchemes.filter(s => s.kind === "kiwisaver"), s => s.balance), wp = sum(allSchemes.filter(s => s.kind === "workplace"), s => s.balance);
   const mort = P.mortgage, debt = (+mort.balance || 0) + sum(P.debts, d => d.balance);
   const assets = (+P.home || 0) + (+P.other || 0) + cash + inv + ks + wp;
-  const older = Math.max(...people.map(p => +p.age));
-  const horizon = Math.max(P.prefs.retireAge - older, 0);
+  const retireOf = p => p.retireAge === "" || p.retireAge == null ? +P.prefs.retireAge : +p.retireAge;
+  const supAge = ASSUME.superAge || rule("nz_super", on).age;
+  const horizon = Math.min(...people.map(p => Math.max(retireOf(p) - +p.age, 0)));
   const risk = P.prefs.risk;
   const rInvReal = fund(risk, .004, maxPir, true);
 
@@ -288,12 +335,23 @@ function analyse(P, budget, on = new Date()) {
     else if (avail > target * 2.5) add(3, "Safety net", "You may be holding too much cash", `Accessible cash covers ${Math.round(avail / spending)} months. After tax and inflation, cash usually loses buying power.`, `Keep about ${$(target)} as the emergency fund, then put the extra on the mortgage or into your investment plan.`);
   }
 
+  // Cash earning very little
+  const lowCash = P.cash.filter(c => +c.balance >= 5000 && (+c.rate || 0) < .02);
+  if (lowCash.length) {
+    const tot = sum(lowCash, c => c.balance), extraInt = tot * .03, mbal = +P.mortgage.balance || 0;
+    let why = `${$(tot)} is earning under 2%. An on-call savings account or cash fund paying around 3% more would add about ${$(extraInt)} a year before tax.`;
+    if (Math.max(...Object.values(marg)) > .28) why += " A PIE cash fund is taxed at no more than 28%, below your income tax rate.";
+    let action = "Move it to a higher-interest on-call account or a PIE cash fund.";
+    if (mbal > 0) action += ` While the mortgage lasts, an offset account does better still: it saves ${pc(+P.mortgage.rate, 2)} interest, tax-free, and the money stays available.`;
+    add(3, "Safety net", "Your cash is earning very little", why, action);
+  }
+
   // KiwiSaver and workplace schemes
-  const k = rule("kiwisaver", on), full = k.full_at, retire = +P.prefs.retireAge;
+  const k = rule("kiwisaver", on), full = k.full_at;
   const flowsBy = {}; for (const p of people) flowsBy[p.name] = schemeFlows(p, on);
   const schemeTax = (p, s) => s.pie === false ? .28 : pirs[p.name];
   for (const p of people) {
-    const age = +p.age, sal = +p.salary || 0, flows = flowsBy[p.name], ksF = flows.filter(f => f.s.kind === "kiwisaver");
+    const age = +p.age, sal = +p.salary || 0, retire = retireOf(p), flows = flowsBy[p.name], ksF = flows.filter(f => f.s.kind === "kiwisaver");
     if (!ksF.length && age >= 16 && age < 65) add(1, "KiwiSaver", `${p.name}: join KiwiSaver`, "Employer contributions and the government contribution are free money.", "Join through your employer or a provider and pick a fund that suits your timeframe.");
     for (const f of ksF) {
       const eligible = taxable(p) <= k.cap && age >= 16 && age < 65;
@@ -303,16 +361,19 @@ function analyse(P, budget, on = new Date()) {
         const mRate = annual(f.s.member, sal) / sal, eRate = f.employerGross / sal;
         if (mRate < k.def - .002) add(2, "KiwiSaver", `${p.name}: check your KiwiSaver contribution rate`, `You're contributing about ${pc(mRate)} of salary; the minimum is now ${pc(k.def)} unless you applied for a temporary rate reduction.`, "Check your payslip and talk to payroll.");
         if (eRate > 0 && eRate < k.def - .002) add(3, "KiwiSaver", `${p.name}: employer KiwiSaver is about ${pc(eRate)}, below the ${pc(k.def)} minimum`, `Employers must pay at least ${pc(k.def)} of gross pay from 1 April 2026. Some employers count contributions to a workplace scheme toward this, or your figures may be from before the change or based on base pay only.`, "Check your payslip or employment agreement with payroll.");
-        if (retire < 65 && mRate > k.def + .005) add(2, "KiwiSaver", `${p.name}: KiwiSaver contributions above ${pc(k.def)} are locked until 65`, `You plan to stop work at ${retire}, but you're putting about ${pc(mRate)} into KiwiSaver, which you can't touch until 65. About ${$((mRate - k.def) * sal)}/yr could go somewhere you can reach earlier.`, `Consider dropping to ${pc(k.def)} and sending the difference to your workplace scheme or your own investments. First check that your employer's contribution doesn't depend on your rate.`);
+        if (retire < supAge && mRate > k.def + .005) add(2, "KiwiSaver", `${p.name}: KiwiSaver contributions above ${pc(k.def)} are locked until ${supAge}`, `You plan to stop work at ${retire}, but you're putting about ${pc(mRate)} into KiwiSaver, which you can't touch until ${supAge}. About ${$((mRate - k.def) * sal)}/yr could go somewhere you can reach earlier.`, `Consider dropping to ${pc(k.def)} and sending the difference to your workplace scheme or your own investments. First check that your employer's contribution doesn't depend on your rate.`);
       }
     }
     for (const f of flows) {
-      const s = f.s, hz = Math.max((s.kind === "kiwisaver" ? 65 : retire) - age, 0), label = s.kind === "kiwisaver" ? "KiwiSaver" : s.name, t = schemeTax(p, s);
+      const s = f.s, hz = Math.max((s.kind === "kiwisaver" ? supAge : retire) - age, 0), label = s.kind === "kiwisaver" ? "KiwiSaver" : s.name, t = schemeTax(p, s);
       if (hz > 10 && (s.fund === "cash" || s.fund === "conservative") && risk !== "conservative") {
         const gap = fv(+s.balance, f.total / 12, fund("growth", +s.fee, t, true), hz) - fv(+s.balance, f.total / 12, fund(s.fund, +s.fee, t, true), hz);
         add(2, s.kind === "kiwisaver" ? "KiwiSaver" : "Super", `${p.name}: ${label} fund may be too cautious`, `${hz} years until you can use it, in a ${s.fund} fund. A growth fund could add roughly ${$(gap)} (today's dollars), with bigger ups and downs along the way.`, "Review the fund type with your provider. Sorted's Fund Finder (sorted.org.nz) compares funds side by side.");
       }
-      if (+s.fee > .01) add(3, "Fees", `${p.name}: ${label} fees look high (${pc(+s.fee, 2)})`, "A 1% fee difference compounds to a large sum over decades.", "Compare fees for the same fund type on Sorted Fund Finder.");
+      if (+s.fee > ASSUME.highFee && hz > 0) {
+        const cost = fv(+s.balance, f.total / 12, fund(s.fund, ASSUME.lowFee, t, true), hz) - fv(+s.balance, f.total / 12, fund(s.fund, +s.fee, t, true), hz);
+        add(3, "Fees", `${p.name}: ${label} fee of ${pc(+s.fee, 2)} could cost about ${$(cost)}`, `Low-cost funds of the same type charge around ${pc(ASSUME.lowFee, 2)}. Over the ${hz} years until you can use this money, the difference compounds to about ${$(cost)} in today's dollars.`, "Compare fees and returns for the same fund type on Sorted's Smart Investor, then switch if a cheaper fund gives the same exposure.");
+      }
       if (s.kind === "workplace") {
         let why = `${$(s.balance)} that you can take when you leave your job. Your employer adds about ${$(f.employerNet)}/yr after tax (${pc(sal ? f.employerGross / sal : 0)} of salary before tax) and you add ${$(f.member)}/yr. Unlike KiwiSaver it isn't locked to 65, so it can fund the years before NZ Super.`;
         if (+s.vested < 1) why += ` Only ${pc(+s.vested, 0)} is vested now, so leaving early could forfeit about ${$(s.balance * (1 - s.vested))} of employer money.`;
@@ -417,32 +478,27 @@ function analyse(P, budget, on = new Date()) {
     add(1, "Investing", `About ${$(idle)}/month of surplus has no job`, `After goal savings and current regular investments, about ${$(idle)}/month is unallocated. Invested, that's about ${$(fv(0, idle, rInvReal, horizon))} in today's dollars by retirement. Otherwise it tends to get spent.`, "Split it on payday by automatic transfer: top up the emergency fund first, then the mortgage (while it lasts) or the core funds.");
   }
 
-  // Retirement + yearly series for chart
-  const sup = rule("nz_super", on);
-  const schemeAt = (p, f, y, kind) => {   // value y years from now, today's dollars
-    const s = f.s, r = fund(s.fund, +s.fee, schemeTax(p, s), true), stop = Math.max(retire - +p.age, 0);
-    const paying = Math.min(y, stop, s.kind === "kiwisaver" ? Math.max(65 - +p.age, 0) : Infinity);
-    return fv(fv(+s.balance, f.total / 12, r, paying), 0, r, y - paying);
-  };
-  const schemeYear = (y, kind) => sum(people, p => sum(flowsBy[p.name].filter(f => f.s.kind === kind), f => schemeAt(p, f, y)));
-  const ksYear = y => schemeYear(y, "kiwisaver"), wpYear = y => schemeYear(y, "workplace");
-  const invYear = y => {
-    let v = fv(inv, regular, rInvReal, y);
-    if (mb > 0 && mp && months != null && y - months / 12 > 0) v += fv(0, mp, rInvReal, y - months / 12);
-    return v;
-  };
-  const ksAt = sum(people, p => sum(flowsBy[p.name].filter(f => f.s.kind === "kiwisaver"), f => schemeAt(p, f, Math.max(Math.max(retire, 65) - +p.age, 0))));
-  const wpAt = sum(people, p => sum(flowsBy[p.name].filter(f => f.s.kind === "workplace"), f => schemeAt(p, f, Math.max(retire - +p.age, 0))));
-  const invAt = invYear(horizon), projected = ksAt + wpAt + invAt;
-  const superAmt = people.length > 1 ? sup.couple : sup.single;
-  const bridge = Math.max(sup.age - P.prefs.retireAge, 0);
-  const capitalNeeded = Math.max(P.prefs.target - superAmt, 0) / ASSUME.swr + bridge * superAmt;
-  const shortfall = Math.max(capitalNeeded - projected, 0);
-  const extra = shortfall ? needMonthly(shortfall, 0, rInvReal, horizon) : 0;
-  const series = []; for (let y = 0; y <= horizon; y++) series.push({ year: on.getFullYear() + y, ks: ksYear(y), wp: wpYear(y), inv: invYear(y) });
-  if (bridge && invAt + wpAt < bridge * P.prefs.target) add(2, "Retirement", `Retiring at ${P.prefs.retireAge} needs savings outside KiwiSaver`, `KiwiSaver can't be withdrawn until 65, so the ${bridge} years before then need about ${$(bridge * P.prefs.target)} from other savings. You're projected to have ${$(invAt + wpAt)} (investments plus workplace schemes).`, "Put more of your new investing outside KiwiSaver, or plan a later retirement.");
-  if (shortfall > 0) add(2, "Retirement", `On track for about ${$(projected * ASSUME.swr + superAmt)}/yr vs a ${$(P.prefs.target)} target`, `Projected savings at retirement are ${$(projected)} (today's dollars) plus NZ Super. To reach your target you need about ${$(capitalNeeded)}.`, `Invest about ${$(extra)}/month more (on top of the redirected mortgage payment), or adjust the target or retirement age.`);
-  else add(3, "Retirement", "Retirement target looks achievable on current settings", `Projected ${$(projected)} in today's dollars plus NZ Super could support about ${$(projected * ASSUME.swr + superAmt)}/yr.`, "Stick with the plan and check every year. Extra savings give you the option of retiring earlier.");
+  // Retirement: month-by-month simulation (see simulate)
+  const sup = rule("nz_super", on), target = +P.prefs.target || 0;
+  const rDraw = Math.min(rInvReal, fund("balanced", .004, maxPir, true));
+  const simIn = {
+    people: people.map(p => ({ age: +p.age, retireAge: retireOf(p),
+      netPay: takeHome(+p.salary || 0, 0, p.sl, on) - sum(flowsBy[p.name], f => f.member),
+      schemes: flowsBy[p.name].map(f => ({ kind: f.s.kind, balance: +f.s.balance || 0, rate: fund(f.s.fund, +f.s.fee, schemeTax(p, f.s), true), contribution: f.total })) })),
+    invested: inv, monthlyInvest: regular, mortgageMonths: mb <= 0 ? 0 : (mp ? months : null), mortgageRepayment: mb <= 0 ? 0 : mp,
+    target, rGrow: rInvReal, rDraw, superAge: supAge, superPerPerson: people.length > 1 ? sup.couple / 2 : sup.single, planAge: ASSUME.planAge };
+  const run = extra => simulate({ ...simIn, ...extra }), ok = r => r.shortTotal < 1;
+  const base = run({}), sustainable = bisect(x => ok(run({ target: x })), 0, 1e6);
+  const first = people.reduce((a, b) => Math.max(retireOf(b) - +b.age, 0) < Math.max(retireOf(a) - +a.age, 0) ? b : a);
+  const yearsTo = base.drawStart / 12, at = base.atRet, projected = at.ks + at.wp + at.acc;
+  const when = mth => `${on.getFullYear() + Math.floor(mth / 12)} (when ${first.name} is ${+first.age + Math.floor(mth / 12)})`;
+  let extra = null;
+  if (!ok(base) && base.drawStart > 0 && ok(run({ extraMonthly: 50000 }))) extra = 50000 - bisect(x => ok(run({ extraMonthly: 50000 - x })), 0, 50000);
+  const lockedProblem = !ok(base) && ok(run({ lock: false }));
+  const series = base.series.map(x => ({ year: on.getFullYear() + x.yearIndex, ks: x.ks, wp: x.wp, inv: x.acc }));
+  if (ok(base)) add(3, "Retirement", "Retirement target looks achievable on current settings", `Projected savings of ${$(projected)} (today's dollars) when ${first.name} stops work in ${yearsTo} years, plus NZ Super from 65, cover ${$(target)}/yr until age ${ASSUME.planAge}. They could support about ${$(sustainable)}/yr.`, "Stick with the plan and check every year. Extra savings give you the option of retiring earlier or spending more.");
+  else if (lockedProblem) add(2, "Retirement", "The money you can reach runs out before KiwiSaver opens", `Your total savings are enough for ${$(target)}/yr, but too much is locked in KiwiSaver. On current settings the money outside KiwiSaver runs out around ${when(base.firstShort)}.`, (extra ? `Put about ${$(extra)}/month more into investments outside KiwiSaver, ` : "Build more savings outside KiwiSaver, ") + "keep KiwiSaver at the minimum rate, or retire later.");
+  else add(2, "Retirement", `On track for about ${$(sustainable)}/yr vs a ${$(target)} target`, `Projected savings of ${$(projected)} (today's dollars) when ${first.name} stops work, plus NZ Super, would run out around ${when(base.firstShort)} if you spend ${$(target)}/yr.`, (extra ? `Invest about ${$(extra)}/month more until then, ` : "Save more, ") + "or adjust the target or retirement age.");
 
   // Protection
   if (!P.wills) add(2, "Protection", "Make or update your wills and enduring powers of attorney", "Without these, your family and assets may not be looked after the way you want.", "See a lawyer or Public Trust. Review after big life changes.");
@@ -451,7 +507,7 @@ function analyse(P, budget, on = new Date()) {
   recs.sort((a, b) => a.priority - b.priority);
   return { recs, goals, pirs, marg, income, spending, surplus, cats, months,
     sheet: { home: +P.home || 0, ks, wp, inv, cash, other: +P.other || 0, debt, assets, net: assets - debt }, flowsBy,
-    ret: { horizon, ksAt, wpAt, invAt, projected, superAmt, capitalNeeded, shortfall, extra, income: projected * ASSUME.swr + superAmt, real: rInvReal, series } };
+    ret: { horizon: yearsTo, first: first.name, ksAt: at.ks, wpAt: at.wp, invAt: at.acc, projected, superAmt: simIn.superPerPerson * people.length, sustainable, target, extra, lockedProblem, shortYear: base.firstShort == null ? null : on.getFullYear() + Math.floor(base.firstShort / 12), real: rInvReal, rDraw, series } };
 }
 
 /* ===== CSV import. Mirrors kiwiwealth/budget_import.py ===== */
@@ -511,6 +567,10 @@ const EXAMPLE = {
   budget: { income: 12000, spending: 7400 },
   prefs: { risk: "growth", shares: true, retireAge: 62, target: 85000, maxShare: .10 },
 };
+const BLANK_PROFILE = { example: false, household: "Our household", home: 0, other: 0, dependants: 0, wills: false, incomeCover: false,
+  people: [{ name: "Person 1", age: 40, salary: 0, other: 0, pie: 0, priorTaxable: "", priorPie: "", currentPir: "", retireAge: "", sl: false, schemes: [] }],
+  cash: [], holdings: [], mortgage: { balance: 0, rate: 0, repayment: 0, kind: "table", limit: 0 }, debts: [], goals: [],
+  budget: { income: "", spending: "" }, prefs: { risk: "growth", shares: true, retireAge: 65, target: 70000, maxShare: .10 } };
 const KEY = "kiwiwealth.v1";
 const clone = o => JSON.parse(JSON.stringify(o));
 let state, csvBudget = null;
@@ -518,24 +578,29 @@ try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); state = migrate
 const cacheLocal = () => { try { localStorage.setItem(KEY, JSON.stringify({ profile: state, csv: csvBudget })); } catch {} };
 
 /* ===== Sync: one shared household document, live between phones ===== */
-const SYNC_TEXT = { local: "Not syncing: tap for details", loading: "Connecting…", synced: "Synced across your phones", saving: "Saving…", offline: "Not synced yet: tap for details", readonly: "View only: tap for details", error: "Sync problem: tap for details" };
-const sync = { available: false, canWrite: true, lastError: "", lastSynced: "", remoteUpdated: "" };
+const SYNC_TEXT = { local: "Not syncing: tap for details", loading: "Connecting…", synced: "Synced across your phones", saving: "Saving…", offline: "Not synced yet: tap for details", readonly: "View only: tap for details", error: "Sync problem: tap for details", conflict: "Two different versions: tap to choose" };
+const sync = { available: false, canWrite: true, lastError: "", lastSynced: "", remoteUpdated: "", conflict: null };
 function setSync(st, text) { const e = document.getElementById("sync"); if (!e) return; e.dataset.s = st; e.textContent = text || SYNC_TEXT[st]; renderSyncPanel(); }
-let hhDoc = null, lastSent = null, writing = false, queued = false, saveTimer = null, firstSnap = false;
-let dirty = false; try { dirty = localStorage.getItem(KEY + ".dirty") === "1"; } catch {}
-const setDirty = v => { dirty = v; try { v ? localStorage.setItem(KEY + ".dirty", "1") : localStorage.removeItem(KEY + ".dirty"); } catch {} };
+// The store returns keys in its own order, so compare with keys sorted at every level.
+const canon = v => JSON.stringify(v, (k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(n => [n, x[n]])) : x);
+const lsGet = k => { try { return localStorage.getItem(KEY + k); } catch { return null; } };
+const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(KEY + k) : localStorage.setItem(KEY + k, v); } catch {} };
+let hhDoc = null, writing = false, queued = false, saveTimer = null, firstSnap = false, sentAt = null;
+let dirty = lsGet(".dirty") === "1", baseAt = lsGet(".base");   // baseAt: the shared copy's timestamp this phone last matched
+const setDirty = v => { dirty = v; lsSet(".dirty", v ? "1" : null); };
+const setBase = v => { baseAt = v; lsSet(".base", v); };
 const payload = () => ({ profile: state, csv: csvBudget });
 async function flush() {
-  if (!hhDoc || !sync.canWrite) return false;
+  if (!hhDoc || !sync.canWrite || sync.conflict || pendingRemote) return false;
   if (writing) { queued = true; return false; }
   writing = true; setSync("saving");
-  const body = payload(), json = JSON.stringify(body);
-  let ok = false;
+  const json = JSON.stringify(payload()), stamp = new Date().toISOString();
+  let ok = false; sentAt = stamp;
   try {
-    await hhDoc.set({ ...JSON.parse(json), updatedAt: new Date().toISOString() });
-    lastSent = json; ok = true; sync.lastError = ""; sync.lastSynced = new Date().toLocaleString("en-NZ");
+    await hhDoc.set({ ...JSON.parse(json), updatedAt: stamp });
+    ok = true; sync.lastError = ""; sync.lastSynced = new Date().toLocaleString("en-NZ"); setBase(stamp);
     if (JSON.stringify(payload()) === json) setDirty(false);
-    setSync("synced");
+    setSync(sync.conflict ? "conflict" : "synced");
   } catch (e) {
     sync.lastError = (e?.code || "unknown") + (e?.message ? ": " + e.message : "");
     if (e?.code === "invalid_argument" || e?.code === "not_granted") { sync.canWrite = false; setSync("readonly"); }
@@ -543,9 +608,34 @@ async function flush() {
   } finally { writing = false; if (queued) { queued = false; flush(); } }
   return ok;
 }
-function save() { cacheLocal(); setDirty(true); if (!hhDoc || !sync.canWrite) { setSync(hhDoc ? "readonly" : sync.available ? "loading" : "local"); return; } clearTimeout(saveTimer); setSync("saving"); saveTimer = setTimeout(flush, 700); }
+function save() {
+  cacheLocal(); setDirty(true);
+  if (sync.conflict) { setSync("conflict"); return; }
+  if (!hhDoc || !sync.canWrite) { setSync(hhDoc ? "readonly" : sync.available ? "loading" : "local"); return; }
+  clearTimeout(saveTimer); setSync("saving"); saveTimer = setTimeout(flush, 700);
+}
+function adoptRemote(d) {
+  state = migrate(clone(d.profile)); csvBudget = d.csv ? clone(d.csv) : null; cacheLocal(); setDirty(false); setBase(d.updatedAt || null);
+  pendingRemote = null; refresh(true);
+}
+// A shared copy that arrives while someone is typing in Details waits until they leave the field,
+// so the form never shows one set of numbers while holding another.
+let pendingRemote = null;
+const editingDetails = () => !el("view-details").hidden && el("view-details").contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+document.addEventListener("focusout", () => setTimeout(() => {
+  if (!pendingRemote || editingDetails()) return;
+  const d = pendingRemote; pendingRemote = null;
+  if (canon({ profile: d.profile, csv: d.csv ?? null }) === canon(payload())) return;
+  if (!dirty || !sync.canWrite) adoptRemote(d);
+  else { sync.conflict = d; el("syncPanel").hidden = false; setSync("conflict"); }
+}, 0));
 function renderSyncPanel() {
   const box = document.getElementById("syncPanel"); if (!box || box.hidden) return;
+  if (sync.conflict) {
+    box.innerHTML = `<p><strong>This phone and the shared copy have different numbers.</strong> This phone has changes that were never sent, and the shared copy was changed ${sync.conflict.updatedAt ? "on " + new Date(sync.conflict.updatedAt).toLocaleString("en-NZ") : "from another phone"}. Choose which to keep. The other version is replaced.</p>
+      <div class="row"><button type="button" id="keepMine">Keep this phone's numbers</button><button type="button" class="ghost" id="keepShared">Use the shared numbers</button></div>`;
+    return;
+  }
   const why = !sync.available
     ? "This view of the page can't reach shared storage, so changes stay on this phone only. Open the link in your phone's web browser while signed in to claude.ai, or update the Claude app, then reload."
     : !sync.canWrite ? "You can see the shared numbers but your access is view-only. The owner needs to share the page with you as Editor (or Contributor)."
@@ -563,6 +653,8 @@ function renderSyncPanel() {
 document.addEventListener("click", async e => {
   if (e.target.id === "sync") { const b = el("syncPanel"); b.hidden = !b.hidden; renderSyncPanel(); }
   if (e.target.id === "pushNow") { const ok = await flush(); const m = el("pushMsg"); if (m) m.textContent = ok ? "Sent. Other phones update within a few seconds (reload them if not)." : "Couldn't send. See the error above."; }
+  if (e.target.id === "keepMine") { sync.conflict = null; await flush(); }
+  if (e.target.id === "keepShared") { const d = sync.conflict; sync.conflict = null; adoptRemote(d); setSync("synced"); }
 });
 async function startSync() {
   let db = null;
@@ -576,21 +668,23 @@ async function startSync() {
   hhDoc.onSnapshot(snap => {
     if (snap.metadata.fromCache && !snap.exists) return; // wait for the store's answer
     if (!snap.metadata.fromCache) { firstSnap = true; clearTimeout(timer); }
-    if (snap.exists) {
-      const d = snap.data(), json = JSON.stringify({ profile: d.profile, csv: d.csv ?? null });
-      sync.remoteUpdated = d.updatedAt || "";
-      if (dirty && !snap.metadata.fromCache && json !== JSON.stringify(payload()) && json !== lastSent) {
-        flush(); // this phone has edits the shared copy hasn't seen: send them
-      } else if (json !== JSON.stringify(payload()) && json !== lastSent && d.profile?.people) {
-        state = migrate(clone(d.profile)); csvBudget = d.csv ? clone(d.csv) : null; cacheLocal();
-        const editing = el("view-details").contains(document.activeElement) && !el("view-details").hidden;
-        refresh(!editing);
-      }
-      if (!snap.metadata.hasPendingWrites && !writing) setSync(sync.canWrite ? (dirty ? "offline" : "synced") : "readonly");
-    } else if (!snap.metadata.fromCache) {
+    if (!snap.exists) {
+      if (snap.metadata.fromCache) return;
       // Nothing shared yet: upload what this phone has, unless it's only the example.
       if (!state.example && sync.canWrite) flush(); else setSync(sync.canWrite ? "synced" : "readonly", sync.canWrite ? "Ready to sync. Enter your numbers in Details" : SYNC_TEXT.readonly);
+      return;
     }
+    const d = snap.data();
+    if (!d.profile?.people) return;
+    sync.remoteUpdated = d.updatedAt || "";
+    const same = canon({ profile: d.profile, csv: d.csv ?? null }) === canon(payload());
+    const ours = d.updatedAt && (d.updatedAt === baseAt || d.updatedAt === sentAt);   // the shared copy is one this phone wrote or already matched
+    if (same) { if (!writing && !snap.metadata.hasPendingWrites) { setDirty(false); setBase(d.updatedAt || null); } }
+    else if (snap.metadata.fromCache) { /* wait for the live answer before deciding */ }
+    else if ((!dirty && !ours) || !sync.canWrite) { if (editingDetails()) pendingRemote = clone(d); else adoptRemote(d); }
+    else if (ours) { if (dirty && !writing) flush(); }   // only this phone has changed since: send it. Never re-send without unsent edits.
+    else { sync.conflict = clone(d); el("syncPanel").hidden = false; setSync("conflict"); return; }
+    if (!sync.conflict && !snap.metadata.hasPendingWrites && !writing) setSync(sync.canWrite ? (dirty ? "saving" : "synced") : "readonly");
   }, err => { clearTimeout(timer); sync.lastError = "listener: " + (err?.code || "unknown"); setSync(err?.code === "revoked" ? "readonly" : "offline"); });
 }
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -612,7 +706,7 @@ function renderPlan(A) {
     <section class="stats">
       <div class="stat"><span class="v">${A.months == null ? "—" : A.months === 0 ? "Free" : A.months + " mo"}</span><span class="k">Mortgage-free in</span></div>
       <div class="stat"><span class="v">${rate == null ? "—" : pc(rate, 0)}</span><span class="k">Savings rate${csvBudget ? " (from CSV)" : ""}</span></div>
-      <div class="stat"><span class="v">${$(A.ret.income)}</span><span class="k">Retirement income/yr</span></div>
+      <div class="stat"><span class="v">${$(A.ret.sustainable)}</span><span class="k">Retirement income/yr your savings support</span></div>
     </section>
     <section class="group" aria-label="Action plan"><h2>Action plan</h2>
     ${[1, 2, 3, 4].filter(p => groups[p]).map(p => `
@@ -624,7 +718,7 @@ function renderPlan(A) {
 }
 
 /* ===== Future view ===== */
-function chart(series) {
+function chart(series, retireYear) {
   const W = 340, H = 200, L = 46, R = 10, T = 12, B = 26;
   const max = Math.max(...series.map(d => d.ks + d.wp + d.inv), 1);
   const step = [50e3, 100e3, 250e3, 500e3, 1e6, 2e6].find(s => max / s <= 5) || 5e6;
@@ -632,14 +726,14 @@ function chart(series) {
   const x = i => L + (W - L - R) * (series.length > 1 ? i / (series.length - 1) : 0), y = v => T + (H - T - B) * (1 - v / top);
   const area = (f, g) => series.map((d, i) => `${x(i)},${y(f(d))}`).join(" ") + " " + series.map((d, i) => `${x(i)},${y(g(d))}`).reverse().join(" ");
   const ticks = []; for (let v = 0; v <= top; v += step) ticks.push(v);
-  const xt = series.filter((d, i) => i === 0 || i === series.length - 1 || (series.length > 8 && i % 5 === 0 && series.length - 1 - i >= 3));
-  const last = series[series.length - 1];
+  const gap = series.length > 50 ? 20 : series.length > 30 ? 10 : 5;
+  const xt = series.filter((d, i) => i === 0 || i === series.length - 1 || (series.length > 8 && i % gap === 0 && series.length - 1 - i >= gap / 2));
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Projected savings outside the house">
-    ${ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v >= 1e6 ? "$" + v / 1e6 + "m" : "$" + v / 1e3 + "k"}</text>`).join("")}
+    ${ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v === 0 ? "$0" : v >= 1e6 ? "$" + v / 1e6 + "m" : "$" + v / 1e3 + "k"}</text>`).join("")}
     <polygon points="${area(d => d.ks, () => 0)}" fill="var(--pounamu)" opacity=".85"/>
     <polygon points="${area(d => d.ks + d.wp, d => d.ks)}" fill="var(--wp)" opacity=".85"/>
     <polygon points="${area(d => d.ks + d.wp + d.inv, d => d.ks + d.wp)}" fill="var(--kowhai)" opacity=".85"/>
-    <circle cx="${x(series.length - 1)}" cy="${y(last.ks + last.wp + last.inv)}" r="4" fill="var(--ink)"/>
+    ${(() => { const i = series.findIndex(d => d.year === retireYear); return i > 0 ? `<line x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${H - B}" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3"/><text x="${x(i) + 4}" y="${T + 9}">stop work</text>` : ""; })()}
     ${xt.map(d => { const i = series.indexOf(d); return `<text x="${x(i)}" y="${H - 8}" text-anchor="${i === 0 ? "start" : i === series.length - 1 ? "end" : "middle"}">${d.year}</text>`; }).join("")}
   </svg>`;
 }
@@ -653,20 +747,20 @@ function schemesCard(A) {
 function renderFuture(A) {
   const r = A.ret;
   el("view-future").innerHTML = `
-    <section class="card"><div><span class="eyebrow">Retirement projection · today's dollars</span><h2>${$(r.projected)} by ${new Date().getFullYear() + r.horizon}</h2></div>
-      ${r.series.length > 1 ? chart(r.series) : ""}
-      <div class="legend"><span><i style="background:var(--pounamu)"></i>KiwiSaver</span><span><i style="background:var(--wp)"></i>Workplace super</span><span><i style="background:var(--kowhai)"></i>Investments (incl. redirected mortgage payment)</span></div>
+    <section class="card"><div><span class="eyebrow">Retirement projection · today's dollars</span><h2>${$(r.sustainable)}/yr to age ${ASSUME.planAge}</h2>
+      <p class="small muted">${r.sustainable >= r.target ? `That's above your ${$(r.target)}/yr target.` : `Your target is ${$(r.target)}/yr${r.shortYear ? `; at that rate the money you can reach runs out around ${r.shortYear}` : ""}.`}</p></div>
+      ${r.series.length > 1 ? chart(r.series, new Date().getFullYear() + r.horizon) : ""}
+      <div class="legend"><span><i style="background:var(--pounamu)"></i>KiwiSaver (locked to 65)</span><span><i style="background:var(--wp)"></i>Workplace super</span><span><i style="background:var(--kowhai)"></i>Money you can use</span></div>
       <dl class="kv">
-        <dt>Years to retirement</dt><dd>${r.horizon}</dd>
-        <dt>KiwiSaver at 65</dt><dd>${$(r.ksAt)}</dd>
-        <dt>Workplace super at retirement</dt><dd>${$(r.wpAt)}</dd>
-        <dt>Other investments</dt><dd>${$(r.invAt)}</dd>
-        <dt>NZ Super (household)</dt><dd>${$(r.superAmt)}/yr</dd>
-        <dt>Sustainable income</dt><dd>${$(r.income)}/yr</dd>
-        <dt>Your target</dt><dd>${$(state.prefs.target)}/yr</dd>
-        ${r.shortfall ? `<dt>Extra needed</dt><dd>${$(r.extra)}/mo</dd>` : ""}
+        <dt>${esc(r.first)} stops work in</dt><dd>${r.horizon} yrs</dd>
+        <dt>KiwiSaver then</dt><dd>${$(r.ksAt)}</dd>
+        <dt>Workplace super then</dt><dd>${$(r.wpAt)}</dd>
+        <dt>Investments then</dt><dd>${$(r.invAt)}</dd>
+        <dt>NZ Super once all are 65</dt><dd>${$(r.superAmt)}/yr</dd>
+        <dt>Your target</dt><dd>${$(r.target)}/yr</dd>
+        ${r.extra ? `<dt>Extra investing needed</dt><dd>${$(r.extra)}/mo</dd>` : ""}
       </dl>
-      <p class="small muted">Assumes ${pc(r.real)} a year real return after fees and tax, ${pc(ASSUME.inflation)} inflation and a 4% yearly drawdown. Contributions stop when you retire; KiwiSaver can't be withdrawn until 65.</p>
+      <p class="small muted">The chart shows your savings if you spend exactly your target. Worked out month by month. Each person's contributions stop when they stop work. Regular investing and the redirected mortgage payment stop when the first person retires. From then you spend your target each year, less the pay of anyone still working and less NZ Super from 65. Pay above the target isn't counted as saved. Assumes ${pc(r.real)} a year after fees, tax and inflation while saving and ${pc(r.rDraw)} once drawing down.</p>
     </section>
     ${schemesCard(A)}
     ${A.goals.length ? `<section class="card"><h2>Goals</h2><div class="scroll"><table><thead><tr><th>Goal</th><th class="r">Target</th><th class="r">Year</th><th>Keep it in</th><th class="r">Per month</th></tr></thead><tbody>
@@ -706,14 +800,14 @@ function renderBudget(A) {
 /* ===== Details (form) ===== */
 const PIR_OPTS = [["", "Not sure"], [.105, "10.5%"], [.175, "17.5%"], [.28, "28%"]];
 const F = {
-  person: [["name", "Name", "text"], ["age", "Age", "num"], ["salary", "Salary (gross/yr)", "money"], ["other", "Other taxable income/yr", "money"], ["pie", "PIE income/yr (from funds)", "money"], ["priorTaxable", "Last year's taxable income", "money"], ["currentPir", "PIR set with providers", "select", PIR_OPTS], ["sl", "Student loan", "bool"]],
+  person: [["name", "Name", "text"], ["age", "Age", "num"], ["salary", "Salary (gross/yr)", "money"], ["other", "Other taxable income/yr", "money"], ["pie", "PIE income/yr (from funds)", "money"], ["priorTaxable", "Last year's taxable income", "money"], ["currentPir", "PIR set with providers", "select", PIR_OPTS], ["retireAge", "Retire at age (blank = default)", "num"], ["sl", "Student loan", "bool"]],
   scheme: [["name", "Scheme name", "text"], ["kind", "Type", "select", [["kiwisaver", "KiwiSaver (to 65)"], ["workplace", "Workplace (on leaving)"]]], ["balance", "Balance", "money"], ["fund", "Fund type", "select", FUNDS.map(f => [f, f])], ["fee", "Total fees %", "pct"], ["voluntary", "One-off top-ups $/yr", "money"], ["pie", "PIE fund (taxed at your PIR)", "bool"]],
   cash: [["name", "Account", "text"], ["balance", "Balance", "money"], ["rate", "Interest %", "pct"], ["emergency", "Counts as emergency fund", "bool"]],
   holdings: [["name", "Name", "text"], ["owner", "Owner", "owner"], ["type", "Type", "select", [["pie", "Managed fund (PIE)"], ["nz_listed", "NZ shares (direct)"], ["direct_offshore", "Overseas shares (direct)"], ["asx_exempt", "ASX shares (exempt)"]]], ["value", "Value now", "money"], ["cost", "Amount paid", "money"], ["fee", "Fee %", "pct"], ["monthly", "Monthly contribution", "money"], ["single", "Single company", "bool"]],
   debts: [["name", "Debt", "text"], ["balance", "Balance", "money"], ["rate", "Interest %", "pct"]],
   goals: [["name", "Goal", "text"], ["target", "Target", "money"], ["year", "Year", "num"], ["saved", "Saved so far", "money"], ["priority", "Priority", "select", [[1, "Must have"], [2, "Important"], [3, "Nice to have"]]]],
 };
-const BLANK = { person: { name: "", age: 40, salary: 0, other: 0, pie: 0, priorTaxable: "", priorPie: "", currentPir: "", sl: false, schemes: [] },
+const BLANK = { person: { name: "", age: 40, salary: 0, other: 0, pie: 0, priorTaxable: "", priorPie: "", currentPir: "", retireAge: "", sl: false, schemes: [] },
   kiwisaver: { name: "KiwiSaver", kind: "kiwisaver", balance: 0, fund: "balanced", fee: .006, pie: true, vested: 1, voluntary: 0, member: { amount: .035, unit: "pct" }, employer: { amount: .035, unit: "pct", afterTax: false } },
   workplace: { name: "Workplace savings scheme", kind: "workplace", balance: 0, fund: "growth", fee: .005, pie: true, vested: 1, voluntary: 0, member: { amount: 0, unit: "fortnight" }, employer: { amount: .07, unit: "pct", afterTax: false } }, cash: { name: "Savings", balance: 0, rate: .03, emergency: true }, holdings: { name: "New fund", owner: "joint", type: "pie", value: 0, cost: 0, fee: .004, monthly: 0, single: false }, debts: { name: "Credit card", balance: 0, rate: .2 }, goals: { name: "New goal", target: 10000, year: new Date().getFullYear() + 3, saved: 0, priority: 2 } };
 function input(path, [key, label, kind, opts], obj, wide) {
@@ -772,7 +866,7 @@ function renderDetails() {
     ${list("goals", "Goals", F.goals, S.goals, "goals")}
     <fieldset><legend>Preferences</legend><div class="fields">
       ${input("prefs", ["risk", "Risk level", "select", FUNDS.slice(1).map(f => [f, f])], S.prefs)}
-      ${input("prefs", ["retireAge", "Retire at age", "num"], S.prefs)}
+      ${input("prefs", ["retireAge", "Default retirement age", "num"], S.prefs)}
       ${input("prefs", ["target", "Retirement income/yr (today's $)", "money"], S.prefs)}
       ${input("prefs", ["maxShare", "Max in one company %", "pct"], S.prefs)}
       ${input("prefs", ["shares", "Include a share satellite", "bool"], S.prefs, true)}</div></fieldset>
@@ -787,7 +881,8 @@ function setPath(path, value) { const ks = path.split(".").filter(Boolean); let 
 el("view-details").addEventListener("change", e => {
   const t = e.target, k = t.dataset.k; if (!k) return;
   let v = t.value; const kind = t.dataset.t;
-  if (kind === "bool") v = t.checked; else if (kind === "boolsel") v = t.value === "true"; else if (kind === "pct") v = v === "" ? 0 : +v / 100; else if (kind === "money" || kind === "num") v = v === "" ? (k.endsWith("priorTaxable") ? "" : 0) : +v.replace(/[$,]/g, "");
+  if (kind === "bool") v = t.checked; else if (kind === "boolsel") v = t.value === "true"; else if (kind === "pct") v = v === "" ? 0 : +v / 100; else if (kind === "money" || kind === "num") { v = v.trim() === "" ? (/\.(priorTaxable|retireAge)$/.test(k) ? "" : 0) : +v.replace(/[$,\s]/g, ""); }
+  if (typeof v === "number" && Number.isNaN(v)) { renderDetails(); return; }   // not a number: put the old value back
   if (/\.(member|employer)\.unit$/.test(k)) {   // keep the same yearly amount when switching units
     const c = getPath(k.replace(/\.unit$/, "")), sal = +state.people[+k.split(".")[1]].salary || 0, yr = annual(c, sal);
     c.amount = UNITS[v] == null ? (sal ? +(yr / sal).toFixed(5) : 0) : +(yr / UNITS[v]).toFixed(2);
@@ -799,7 +894,7 @@ el("view-details").addEventListener("change", e => {
 el("view-details").addEventListener("click", async e => {
   const t = e.target;
   if (t.dataset.addto) { getPath(t.dataset.addto).push(clone(BLANK[t.dataset.blank])); changed(true); }
-  if (t.dataset.del) { const ps = t.dataset.del.split("."), i = +ps.pop(); if (ps.join(".") === "people" && state.people.length === 1) return; getPath(ps.join(".")).splice(i, 1); changed(true); }
+  if (t.dataset.del) { const ps = t.dataset.del.split("."), i = +ps.pop(); if (ps.join(".") === "people" && state.people.length === 1) return; getPath(ps.join(".")).splice(i, 1); migrate(state); changed(true); }
   if (t.id === "copyData") { const text = JSON.stringify(state); try { await navigator.clipboard.writeText(text); el("moveMsg").textContent = "Copied."; } catch { const b = el("pasteBox"); b.value = text; b.select(); el("moveMsg").textContent = "Selected below. Copy it manually."; } }
   if (t.id === "resetEx") {
     if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "Tap again: this clears it on every phone"; setTimeout(() => { if (t.isConnected) { t.dataset.armed = ""; t.textContent = "Start again with example"; } }, 4000); return; }
@@ -826,7 +921,10 @@ function route() {
   document.querySelectorAll("nav.tabs a").forEach(a => a.dataset.tab === tab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   window.scrollTo(0, 0);
 }
-document.addEventListener("click", e => { const g = e.target.closest("[data-go]"); if (g) location.hash = g.dataset.go; });
+document.addEventListener("click", e => {
+  const g = e.target.closest("[data-go]"); if (g) location.hash = g.dataset.go;
+  if (e.target.id === "startBlank") { state = clone(BLANK_PROFILE); csvBudget = null; cacheLocal(); refresh(true); location.hash = "details"; }
+});
 window.addEventListener("hashchange", route);
 refresh(true); route(); startSync();
 </script>

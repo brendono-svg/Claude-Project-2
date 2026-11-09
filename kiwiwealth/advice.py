@@ -6,6 +6,7 @@ function so it's easy to read, test and change.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Callable
@@ -13,6 +14,7 @@ from typing import Any, Callable
 from . import nz_rules as nz
 from .budget_import import BudgetSummary
 from .profile import Person, Profile
+from .retirement import SimPerson, SimScheme, bisect, simulate
 from .projections import (after_tax_return, future_value, months_to_repay, real_rate,
                           required_monthly, total_interest)
 
@@ -75,16 +77,31 @@ def fund_after_tax(a: Analysis, fund_type: str, fee: float, pir: float, real: bo
     return real_rate(r, a.profile.assumption("inflation")) if real else r
 
 
+def retire_age(profile: Profile, p: Person) -> int:
+    return profile.preferences.retirement_age if p.retirement_age is None else p.retirement_age
+
+
+def super_age(a: "Analysis") -> int:
+    return a.profile.assumption("nz_super_age") or nz.rule("nz_super", a.on)["age"]
+
+
+def first_retirement_years(profile: Profile) -> int:
+    """Years until the first person stops work: when saving stops and drawdown starts."""
+    return min(max(retire_age(profile, p) - p.age, 0) for p in profile.people)
+
+
 def years_to(age: int, target_age: int) -> int:
     return max(target_age - age, 0)
 
 
 def m(x: float) -> str:
-    return f"${x:,.0f}"
+    """Dollars, rounded half up (the phone app formats the same way)."""
+    return ("-$" if x < 0 else "$") + f"{math.floor(abs(x) + 0.5):,}"
 
 
 def pct(x: float, dp: int = 1) -> str:
-    return f"{x * 100:.{dp}f}%"
+    scale = 10 ** dp
+    return f"{math.floor(x * 100 * scale + 0.5 + 1e-9) / scale:.{dp}f}%"
 
 
 @dataclass
@@ -135,6 +152,9 @@ def scheme_tax(a: "Analysis", p: Person, sc) -> float:
 # ---------------------------------------------------------------------------
 
 
+HIGH_FEE, LOW_FEE = 0.006, 0.0035
+
+
 def rule_expensive_debt(a: Analysis) -> None:
     for d in a.profile.debts:
         if d.rate >= 0.08 and d.balance > 0:
@@ -174,14 +194,34 @@ def rule_emergency_fund(a: Analysis) -> None:
                "excess": round(available - target)})
 
 
+def rule_idle_cash(a: Analysis) -> None:
+    low = [c for c in a.profile.cash if c.balance >= 5_000 and c.interest_rate < 0.02]
+    if not low:
+        return
+    total = sum(c.balance for c in low)
+    top = max(a.marginal_rates.values())
+    extra = total * 0.03
+    why = (f"{m(total)} is earning under 2%. An on-call savings account or cash fund paying around 3% "
+           f"more would add about {m(extra)} a year before tax.")
+    if top > 0.28:
+        why += " A PIE cash fund is taxed at no more than 28%, below your income tax rate."
+    mort = a.profile.mortgage
+    action = "Move it to a higher-interest on-call account or a PIE cash fund."
+    if mort.balance > 0:
+        action += (f" While the mortgage lasts, an offset account does better still: it saves {pct(mort.rate, 2)} "
+                   "interest, tax-free, and the money stays available.")
+    a.add(3, "Safety net", "Your cash is earning very little", why, action,
+          {"low_interest_cash": round(total), "extra_interest": round(extra)})
+
+
 def rule_kiwisaver(a: Analysis) -> None:
     ks_rule = nz.rule("kiwisaver", a.on)
     full = nz.kiwisaver_contribution_for_max_govt(a.on)
     risk = a.profile.preferences.risk_tolerance
-    retire = a.profile.preferences.retirement_age
-    super_age = nz.rule("nz_super", a.on)["age"]
+    sup_age = super_age(a)
     min_rate = ks_rule["default_employee_rate"]
     for p in a.profile.people:
+        retire = retire_age(a.profile, p)
         flows = scheme_flows(p, a.on)
         ks_flows = [f for f in flows if f.scheme.kind == "kiwisaver"]
         if not ks_flows:
@@ -219,18 +259,18 @@ def rule_kiwisaver(a: Analysis) -> None:
                           "figures may be from before the change or based on base pay only.",
                           "Check your payslip or employment agreement with payroll.",
                           {"employer_rate": round(employer_rate, 4)})
-                if retire < super_age and member_rate > min_rate + 0.005:
+                if retire < sup_age and member_rate > min_rate + 0.005:
                     excess = (member_rate - min_rate) * p.salary
-                    a.add(2, "KiwiSaver", f"{p.name}: KiwiSaver contributions above {pct(min_rate)} are locked until {super_age}",
+                    a.add(2, "KiwiSaver", f"{p.name}: KiwiSaver contributions above {pct(min_rate)} are locked until {sup_age}",
                           f"You plan to stop work at {retire}, but you're putting about {pct(member_rate)} "
-                          f"into KiwiSaver, which you can't touch until {super_age}. About {m(excess)}/yr "
+                          f"into KiwiSaver, which you can't touch until {sup_age}. About {m(excess)}/yr "
                           "could go somewhere you can reach earlier.",
                           f"Consider dropping to {pct(min_rate)} and sending the difference to your workplace "
                           "scheme or your own investments. First check that your employer's contribution doesn't "
                           "depend on your rate.", {"excess_annual": round(excess)})
         for f in flows:
             sc = f.scheme
-            access_age = super_age if sc.kind == "kiwisaver" else retire
+            access_age = sup_age if sc.kind == "kiwisaver" else retire
             horizon = years_to(p.age, access_age)
             label = "KiwiSaver" if sc.kind == "kiwisaver" else sc.name
             t = scheme_tax(a, p, sc)
@@ -242,10 +282,14 @@ def rule_kiwisaver(a: Analysis) -> None:
                       "funds have tended to end well ahead, despite bigger ups and downs along the way.",
                       "Review the fund type with your provider (use the Sorted Fund Finder to compare).",
                       {"extra_todays_dollars": round(gap)})
-            if sc.fee_pct > 0.01:
-                a.add(3, "Fees", f"{p.name}: {label} fees look high ({pct(sc.fee_pct, 2)})",
-                      "A 1% fee difference compounds to a large sum over decades.",
-                      "Compare fees for the same fund type on Sorted Fund Finder.")
+            if sc.fee_pct > HIGH_FEE and horizon > 0:
+                cost = future_value(sc.balance, f.total / 12, fund_after_tax(a, sc.fund_type, LOW_FEE, t, True), horizon) - \
+                       future_value(sc.balance, f.total / 12, fund_after_tax(a, sc.fund_type, sc.fee_pct, t, True), horizon)
+                a.add(3, "Fees", f"{p.name}: {label} fee of {pct(sc.fee_pct, 2)} could cost about {m(cost)}",
+                      f"Low-cost funds of the same type charge around {pct(LOW_FEE, 2)}. Over the {horizon} years "
+                      f"until you can use this money, the difference compounds to about {m(cost)} in today's dollars.",
+                      "Compare fees and returns for the same fund type on Sorted's Smart Investor, "
+                      "then switch if a cheaper fund gives the same exposure.", {"fee_cost": round(cost)})
 
 
 def rule_workplace(a: Analysis) -> None:
@@ -329,8 +373,7 @@ def rule_mortgage(a: Analysis) -> None:
               {"fixed_until": mort.fixed_until})
 
     if months is not None and mort.monthly_repayment:
-        older = max(p.age for p in a.profile.people)
-        horizon = years_to(older, a.profile.preferences.retirement_age)
+        horizon = first_retirement_years(a.profile)
         invest_years = horizon - months / 12
         if invest_years > 0:
             real = fund_after_tax(a, a.profile.preferences.risk_tolerance, 0.004, pir, True)
@@ -361,8 +404,7 @@ def rule_concentration(a: Analysis) -> None:
     release = p.home_value * 0.25
     costs = p.home_value * 0.04
     net = release - costs
-    older = max(x.age for x in p.people)
-    horizon = years_to(older, p.preferences.retirement_age)
+    horizon = first_retirement_years(p)
     real = fund_after_tax(a, p.preferences.risk_tolerance, 0.004, max(a.pirs.values()), True)
     fv = future_value(net, 0, real, horizon)
     swr = p.assumption("safe_withdrawal_rate")
@@ -508,7 +550,7 @@ def rule_goals(a: Analysis) -> None:
         total_needed += need
         a.goals.append({"name": g.name, "target": g.target_amount, "year": g.target_year,
                         "saved": g.saved_so_far, "years": years, "suggested_fund": fund,
-                        "monthly_needed": round(need), "priority": g.priority})
+                        "monthly_needed": round(need), "monthly_exact": need, "priority": g.priority})
     if not a.goals:
         return
     if surplus is not None and total_needed > surplus:
@@ -529,14 +571,13 @@ def rule_idle_surplus(a: Analysis) -> None:
     surplus = a.monthly_surplus
     if surplus is None or surplus <= 0:
         return
-    committed = sum(g["monthly_needed"] for g in a.goals)
+    committed = sum(g["monthly_exact"] for g in a.goals)
     committed += sum(h.monthly_contribution for h in a.profile.holdings)
     idle = surplus - committed
     if idle < 200:
         return
     p = a.profile
-    older = max(x.age for x in p.people)
-    horizon = years_to(older, p.preferences.retirement_age)
+    horizon = first_retirement_years(p)
     real = fund_after_tax(a, p.preferences.risk_tolerance, 0.004, max(a.pirs.values()), True)
     fv = future_value(0, idle, real, horizon)
     a.add(1, "Investing", f"About {m(idle)}/month of surplus has no job",
@@ -547,81 +588,95 @@ def rule_idle_surplus(a: Analysis) -> None:
           {"idle_monthly": round(idle), "value_at_retirement": round(fv)})
 
 
-def rule_retirement(a: Analysis) -> None:
+def sim_inputs(a: Analysis) -> dict[str, Any]:
+    """Everything the retirement simulation needs, in today's dollars."""
     p = a.profile
     prefs = p.preferences
-    super_rule = nz.rule("nz_super", a.on)
-    infl = p.assumption("inflation")
-    swr = p.assumption("safe_withdrawal_rate")
-    older = max(x.age for x in p.people)
-    horizon = years_to(older, prefs.retirement_age)
-
-    ks_total = wp_total = 0.0
-    for person in p.people:
-        stop = years_to(person.age, prefs.retirement_age)  # contributions stop when work stops
-        for f in scheme_flows(person, a.on):
-            sc = f.scheme
-            r = fund_after_tax(a, sc.fund_type, sc.fee_pct, scheme_tax(a, person, sc), True)
-            if sc.kind == "kiwisaver":
-                until = years_to(person.age, max(prefs.retirement_age, super_rule["age"]))
-                paying = min(stop, years_to(person.age, super_rule["age"]))
-                ks_total += future_value(future_value(sc.balance, f.total / 12, r, paying), 0, r, until - paying)
-            else:
-                wp_total += future_value(sc.balance, f.total / 12, r, stop)
-
     pir = max(a.pirs.values())
-    r_inv = fund_after_tax(a, prefs.risk_tolerance, 0.004, pir, True)
-    monthly = sum(h.monthly_contribution for h in p.holdings)
-    inv_total = future_value(p.total_investments, monthly, r_inv, horizon)
+    people = []
+    for person in p.people:
+        flows = scheme_flows(person, a.on)
+        net = nz.take_home_pay(person.salary, 0, person.student_loan, a.on)["net"] - sum(f.member for f in flows)
+        people.append(SimPerson(
+            age=person.age, retire_age=retire_age(p, person), net_pay=net,
+            schemes=[SimScheme(f.scheme.kind, f.scheme.balance,
+                               fund_after_tax(a, f.scheme.fund_type, f.scheme.fee_pct,
+                                              scheme_tax(a, person, f.scheme), True), f.total)
+                     for f in flows]))
+    r_grow = fund_after_tax(a, prefs.risk_tolerance, 0.004, pir, True)
+    r_draw = min(r_grow, fund_after_tax(a, "balanced", 0.004, pir, True))
     mort = p.mortgage
-    if mort.balance > 0 and mort.monthly_repayment:
-        n = months_to_repay(mort.balance, mort.rate, mort.monthly_repayment)
-        if n is not None and horizon - n / 12 > 0:
-            inv_total += future_value(0, mort.monthly_repayment, r_inv, horizon - n / 12)
-    elif mort.balance <= 0:
-        pass  # already free; the mortgage rule nudges them to invest the old payment
+    if mort.balance <= 0:
+        months, repayment = 0, 0.0   # nothing to redirect: the mortgage rule covers the old payment
+    else:
+        months = months_to_repay(mort.balance, mort.rate, mort.monthly_repayment) if mort.monthly_repayment else None
+        repayment = mort.monthly_repayment
+    sup = nz.rule("nz_super", a.on)
+    per_person = sup["couple_annual_net"] / 2 if len(p.people) >= 2 else sup["single_living_alone_annual_net"]
+    return dict(people=people, invested=p.total_investments,
+                monthly_invest=sum(h.monthly_contribution for h in p.holdings),
+                mortgage_months=months, mortgage_repayment=repayment,
+                target=prefs.retirement_income_target, r_grow=r_grow, r_draw=r_draw,
+                super_age=super_age(a), super_per_person=per_person,
+                plan_age=p.assumption("plan_to_age"))
 
-    nz_super = super_rule["couple_annual_net"] if len(p.people) >= 2 else super_rule["single_living_alone_annual_net"]
-    gap_income = max(prefs.retirement_income_target - nz_super, 0)
-    capital_needed = gap_income / swr
-    bridge_years = max(super_rule["age"] - prefs.retirement_age, 0)
-    capital_needed += bridge_years * nz_super  # cover the years before NZ Super starts
-    projected = ks_total + wp_total + inv_total
-    if bridge_years:
-        bridge_cost = bridge_years * prefs.retirement_income_target
-        if inv_total + wp_total < bridge_cost:
-            a.add(2, "Retirement", f"Retiring at {prefs.retirement_age} needs savings outside KiwiSaver",
-                  f"KiwiSaver can't be withdrawn until {super_rule['age']}, so the {bridge_years} years before then "
-                  f"need about {m(bridge_cost)} from other savings. You're projected to have {m(inv_total + wp_total)} "
-                  "(investments plus workplace schemes).",
-                  "Put more of your new investing outside KiwiSaver, or plan a later retirement.",
-                  {"bridge_cost": round(bridge_cost), "accessible_projected": round(inv_total + wp_total)})
-    shortfall = max(capital_needed - projected, 0)
-    extra = required_monthly(capital_needed, projected, 0.0, 0) if horizon == 0 else \
-        (required_monthly(shortfall, 0, r_inv, horizon) if shortfall else 0.0)
+
+def rule_retirement(a: Analysis) -> None:
+    p = a.profile
+    target = p.preferences.retirement_income_target
+    inputs = sim_inputs(a)
+    plan_age = inputs["plan_age"]
+    run = lambda **kw: simulate(**{**inputs, **kw})  # noqa: E731
+    base = run()
+    ok = lambda r: r.short_total < 1  # noqa: E731
+    sustainable = bisect(lambda x: ok(run(target=x)), 0.0, 1_000_000.0)
+    first = min(p.people, key=lambda x: max(retire_age(p, x) - x.age, 0))
+    years = base.draw_start // 12
+    at = base.at_retirement
+    total = at["ks"] + at["wp"] + at["acc"]
+
+    def when(month: int) -> str:
+        return f"{a.on.year + month // 12} (when {first.name} is {first.age + month // 12})"
+
+    extra = None
+    if not ok(base) and base.draw_start > 0:
+        if ok(run(extra_monthly=50_000.0)):
+            extra = 50_000.0 - bisect(lambda x: ok(run(extra_monthly=50_000.0 - x)), 0.0, 50_000.0)
+    locked_problem = not ok(base) and ok(run(lock=False))
 
     a.retirement = {
-        "years_to_retirement": horizon, "kiwisaver_projected": round(ks_total),
-        "workplace_projected": round(wp_total),
-        "investments_projected": round(inv_total), "total_projected": round(projected),
-        "nz_super_annual": nz_super, "income_target": prefs.retirement_income_target,
-        "capital_needed": round(capital_needed), "shortfall": round(shortfall),
-        "extra_monthly_needed": round(extra),
-        "sustainable_income": round(projected * swr + nz_super),
-        "real_return_used": round(r_inv, 4), "inflation": infl,
+        "years_to_retirement": years, "first_to_retire": first.name,
+        "kiwisaver_projected": round(at["ks"]), "workplace_projected": round(at["wp"]),
+        "investments_projected": round(at["acc"]), "total_projected": round(total),
+        "nz_super_annual": round(inputs["super_per_person"] * len(p.people)),
+        "income_target": target, "sustainable_income": round(sustainable),
+        "shortfall_year": None if base.first_short is None else a.on.year + base.first_short // 12,
+        "locked_problem": locked_problem,
+        "extra_monthly_needed": None if extra is None else round(extra),
+        "plan_to_age": plan_age, "real_return_used": round(inputs["r_grow"], 4),
+        "drawdown_return_used": round(inputs["r_draw"], 4), "inflation": p.assumption("inflation"),
+        "series": [{"year": a.on.year + x["year_index"], "ks": round(x["ks"]), "wp": round(x["wp"]),
+                    "acc": round(x["acc"])} for x in base.series],
     }
-    if shortfall > 0:
-        a.add(2, "Retirement", f"On track for about {m(projected * swr + nz_super)}/yr vs a {m(prefs.retirement_income_target)} target",
-              f"Projected savings at retirement are {m(projected)} (today's dollars), plus NZ Super. "
-              f"To reach your target you need about {m(capital_needed)}.",
-              f"Invest about {m(extra)}/month more (on top of the redirected mortgage payment), "
-              "or adjust the target or retirement age.", a.retirement)
-    else:
+    if ok(base):
         a.add(3, "Retirement", "Retirement target looks achievable on current settings",
-              f"Projected {m(projected)} in today's dollars plus NZ Super could support about "
-              f"{m(projected * swr + nz_super)}/yr.",
+              f"Projected savings of {m(total)} (today's dollars) when {first.name} stops work in {years} years, "
+              f"plus NZ Super from 65, cover {m(target)}/yr until age {plan_age}. They could support "
+              f"about {m(sustainable)}/yr.",
               "Stick with the plan and check every year. Extra savings give you the option "
-              "of retiring earlier.", a.retirement)
+              "of retiring earlier or spending more.", a.retirement)
+    elif locked_problem:
+        a.add(2, "Retirement", "The money you can reach runs out before KiwiSaver opens",
+              f"Your total savings are enough for {m(target)}/yr, but too much is locked in KiwiSaver. "
+              f"On current settings the money outside KiwiSaver runs out around {when(base.first_short)}.",
+              (f"Put about {m(extra)}/month more into investments outside KiwiSaver, " if extra else "Build more savings outside KiwiSaver, ")
+              + "keep KiwiSaver at the minimum rate, or retire later.", a.retirement)
+    else:
+        a.add(2, "Retirement", f"On track for about {m(sustainable)}/yr vs a {m(target)} target",
+              f"Projected savings of {m(total)} (today's dollars) when {first.name} stops work, plus NZ Super, "
+              f"would run out around {when(base.first_short)} if you spend {m(target)}/yr.",
+              (f"Invest about {m(extra)}/month more until then, " if extra else "Save more, ")
+              + "or adjust the target or retirement age.", a.retirement)
 
 
 def rule_protection(a: Analysis) -> None:
@@ -637,7 +692,7 @@ def rule_protection(a: Analysis) -> None:
 
 
 RULES: list[Callable[[Analysis], None]] = [
-    rule_expensive_debt, rule_emergency_fund, rule_kiwisaver, rule_workplace, rule_pir, rule_mortgage,
+    rule_expensive_debt, rule_emergency_fund, rule_idle_cash, rule_kiwisaver, rule_workplace, rule_pir, rule_mortgage,
     rule_savings_rate, rule_concentration, rule_investment_plan, rule_fif, rule_ownership,
     rule_goals, rule_idle_surplus, rule_retirement, rule_protection,
 ]
