@@ -166,6 +166,14 @@ to derived tables; every extracted claim carries a quote and a document referenc
 
 ## 8. Risks
 
+- API access looks built for filers: the subscription must use the same RealMe login
+  as the Disclose Register, calls need an organisation key from a Disclose Register
+  organisation, and MBIE approves each subscription (sandbox first). A private
+  individual may not qualify **(verify with MBIE API support)**. Fallback: download
+  fund update PDFs from the free public register search and parse the fixed template.
+- This cloud session cannot reach portal.api.business.govt.nz (DNS blocked by the
+  network allowlist), so the spike needs that host allowed or must run locally.
+
 - New register API may not expose full fund update history, or may limit bulk pulls.
 - Ratings sites may prohibit automated capture or republication.
 - LLM extraction from SIPOs will be uneven; providers describe the same thing very differently.
