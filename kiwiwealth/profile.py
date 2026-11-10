@@ -112,8 +112,32 @@ class CashAccount:
     is_emergency_fund: bool = True
 
 
+LOAN_KINDS = ("table", "offset", "revolving")
+
+
 @dataclass
-class Mortgage:
+class Loan:
+    """A home loan. An offset loan charges interest only on balance minus offset_cash."""
+    name: str = "Home loan"
+    balance: float = 0.0
+    rate: float = 0.0
+    monthly_repayment: float = 0.0
+    kind: str = "table"          # table | offset | revolving
+    fixed: bool = False          # fixed rate: extra repayments may trigger break fees
+    fixed_until: str | None = None
+    offset_cash: float = 0.0     # cash in accounts offsetting this loan (don't also list it under cash)
+    revolving_limit: float = 0.0
+
+    @property
+    def marginal_rate(self) -> float:
+        """What an extra dollar repaid saves: nothing while the loan is fully offset."""
+        if self.balance <= 0 or (self.kind == "offset" and self.offset_cash >= self.balance):
+            return 0.0
+        return self.rate
+
+
+@dataclass
+class Mortgage:  # legacy single-loan format; converted to a Loan on load
     balance: float = 0.0
     rate: float = 0.0
     monthly_repayment: float = 0.0
@@ -165,7 +189,7 @@ class Profile:
     vehicles_and_other: float = 0.0
     cash: list[CashAccount] = field(default_factory=list)
     holdings: list[Holding] = field(default_factory=list)
-    mortgage: Mortgage = field(default_factory=Mortgage)
+    loans: list[Loan] = field(default_factory=list)
     debts: list[Debt] = field(default_factory=list)
     goals: list[Goal] = field(default_factory=list)
     budget: Budget = field(default_factory=Budget)
@@ -185,7 +209,11 @@ class Profile:
     # -- Balance sheet -----------------------------------------------------
     @property
     def total_cash(self) -> float:
-        return sum(c.balance for c in self.cash)
+        return sum(c.balance for c in self.cash) + self.offset_cash
+
+    @property
+    def offset_cash(self) -> float:
+        return sum(l.offset_cash for l in self.loans if l.kind == "offset")
 
     @property
     def total_investments(self) -> float:
@@ -201,7 +229,7 @@ class Profile:
 
     @property
     def total_debt(self) -> float:
-        return self.mortgage.balance + sum(d.balance for d in self.debts)
+        return sum(l.balance for l in self.loans) + sum(d.balance for d in self.debts)
 
     @property
     def total_assets(self) -> float:
@@ -280,6 +308,15 @@ def profile_from_dict(d: dict[str, Any]) -> Profile:
         if h.owner not in valid_owners:
             raise ValueError(f"holding {h.name!r} owner must be one of {sorted(valid_owners)}")
 
+    loans = [_build(Loan, x) for x in d.get("loans", [])]
+    if d.get("mortgage") and "loans" not in d:   # legacy single mortgage; ignored once loans are listed
+        old = _build(Mortgage, d["mortgage"])
+        loans.insert(0, Loan(name="Mortgage", balance=old.balance, rate=old.rate,
+                             monthly_repayment=old.monthly_repayment, kind=old.kind,
+                             fixed_until=old.fixed_until, revolving_limit=old.revolving_limit))
+    for l in loans:
+        _check(l.kind, LOAN_KINDS, f"loan {l.name!r} kind")
+
     prefs = _build(Preferences, d.get("preferences"))
     _check(prefs.risk_tolerance, FUND_TYPES[1:], "preferences.risk_tolerance")
 
@@ -291,7 +328,7 @@ def profile_from_dict(d: dict[str, Any]) -> Profile:
         vehicles_and_other=d.get("vehicles_and_other", 0.0),
         cash=[_build(CashAccount, c) for c in d.get("cash", [])],
         holdings=holdings,
-        mortgage=_build(Mortgage, d.get("mortgage")),
+        loans=loans,
         debts=[_build(Debt, x) for x in d.get("debts", [])],
         goals=[_build(Goal, g) for g in d.get("goals", [])],
         budget=_build(Budget, d.get("budget")),
@@ -339,7 +376,15 @@ def profile_from_app_state(state: dict[str, Any]) -> Profile:
                              "after_tax": bool((s.get("employer") or {}).get("afterTax"))},
             } for s in p.get("schemes", [])],
         })
-    mort = state.get("mortgage", {})
+    loans = [{"name": l.get("name", "Home loan"), "balance": l.get("balance") or 0, "rate": l.get("rate") or 0,
+              "monthly_repayment": l.get("repayment") or 0, "kind": l.get("kind", "table"),
+              "fixed": bool(l.get("fixed")), "offset_cash": l.get("offsetCash") or 0,
+              "revolving_limit": l.get("limit") or 0} for l in state.get("loans", [])]
+    mort = state.get("mortgage")
+    if mort and "loans" not in state and ((mort.get("balance") or 0) > 0 or (mort.get("repayment") or 0) > 0):   # data saved before loans were a list (same rule as the app's migrate)
+        loans = [{"name": "Mortgage", "balance": mort.get("balance") or 0, "rate": mort.get("rate") or 0,
+                  "monthly_repayment": mort.get("repayment") or 0, "kind": mort.get("kind", "table"),
+                  "revolving_limit": mort.get("limit") or 0}]
     budget = state.get("budget", {})
     return profile_from_dict({
         "household": state.get("household", "Our household"),
@@ -355,9 +400,7 @@ def profile_from_app_state(state: dict[str, Any]) -> Profile:
                       "type": h.get("type", "pie"), "value": h.get("value") or 0, "cost": h.get("cost") or 0,
                       "fee_pct": h.get("fee") or 0, "monthly_contribution": h.get("monthly") or 0,
                       "single_company": bool(h.get("single"))} for h in state.get("holdings", [])],
-        "mortgage": {"balance": mort.get("balance") or 0, "rate": mort.get("rate") or 0,
-                     "monthly_repayment": mort.get("repayment") or 0, "kind": mort.get("kind", "table"),
-                     "revolving_limit": mort.get("limit") or 0},
+        "loans": loans,
         "debts": [{"name": d.get("name", "Debt"), "balance": d.get("balance") or 0, "rate": d.get("rate") or 0}
                   for d in state.get("debts", [])],
         "goals": [{"name": g.get("name", "Goal"), "target_amount": g.get("target") or 0,

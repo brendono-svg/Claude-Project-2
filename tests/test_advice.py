@@ -194,3 +194,49 @@ def test_app_json_loads(tmp_path):
 def test_low_interest_cash_flagged():
     p = base(cash=[{"name": "Savings", "balance": 30_000, "interest_rate": 0.0}])
     assert any("cash is earning very little" in t for t in titles(analyse(p, on=ON)))
+
+
+def offset_household(**over):
+    d = dict(
+        loans=[{"name": "Fixed loan", "balance": 92_000, "rate": 0.0495, "monthly_repayment": 1_092, "fixed": True},
+               {"name": "Offset loan", "balance": 200_000, "rate": 0.059, "monthly_repayment": 1_324,
+                "kind": "offset", "offset_cash": 200_000}],
+        mortgage=None, cash=[{"name": "Savings", "balance": 20_000, "interest_rate": 0.03}],
+        budget={"monthly_net_income": 19_700, "monthly_spending": 11_300})
+    d.update(over)
+    return base(**d)
+
+
+def test_offset_loan_advice():
+    p = offset_household()
+    assert p.total_cash == 220_000 and p.total_debt == 292_000   # offset cash is an asset
+    a = analyse(p, on=ON)
+    t = titles(a)
+    assert "Pay down Fixed loan first" in t
+    assert "Offset loan: your offset cash covers the whole loan" in t
+    assert "Consider an offset or revolving portion" not in t
+    assert "You may be holding too much cash" not in t        # offset cash is doing its job
+    assert "Build the emergency fund" not in t                # and it counts as accessible
+    spare = next(r for r in a.recommendations if "surplus has no job" in r.title)
+    assert spare.numbers["payoff_months_now"] == 104 and spare.numbers["payoff_months"] < 14
+    assert "break fees" in spare.action                       # fixed-rate caveat
+
+
+def test_fully_offset_only_loan_and_legacy_mortgage():
+    p = offset_household(loans=[{"name": "Offset loan", "balance": 100_000, "rate": 0.059,
+                                 "monthly_repayment": 800, "kind": "offset", "offset_cash": 150_000}])
+    assert "Your home lending is fully offset" in titles(analyse(p, on=ON))
+    legacy = base()   # uses the old single `mortgage` field
+    assert [l.name for l in legacy.loans] == ["Mortgage"] and legacy.loans[0].balance == 50_000
+    assert "Finish the mortgage, then redirect the repayment" in titles(analyse(legacy, on=ON))
+
+
+def test_loans_take_precedence_over_legacy_mortgage():
+    from kiwiwealth.profile import profile_from_app_state
+    p = offset_household(mortgage={"balance": 50_000, "rate": 0.05, "monthly_repayment": 2_000})
+    assert p.total_debt == 292_000                      # the legacy mortgage isn't counted on top
+    state = {"people": [{"name": "A", "age": 40}], "loans": [],
+             "mortgage": {"balance": 50_000, "rate": 0.05, "repayment": 2_000}}
+    assert profile_from_app_state(state).loans == []    # an empty loans list means no loans
+    del state["loans"]
+    assert profile_from_app_state(state).loans[0].balance == 50_000

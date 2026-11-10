@@ -53,6 +53,27 @@ def total_interest(balance: float, annual_rate: float, monthly_payment: float) -
     return round(paid - balance, 2)
 
 
+def loan_schedule(balance: float, annual_rate: float, monthly_payment: float,
+                  offset: float = 0.0) -> tuple[int | None, float | None]:
+    """(months to repay, total interest) for a loan. Interest is charged only on the part
+    of the balance not covered by offset cash, which is held constant (repayments are
+    assumed to come from income). (None, None) if the payment never clears the loan."""
+    if balance <= 0:
+        return 0, 0.0
+    if monthly_payment <= 0:
+        return None, None
+    r, b, paid, n = annual_rate / 12, balance, 0.0, 0
+    while b > 0.005:
+        interest = max(b - offset, 0.0) * r
+        if monthly_payment <= interest or n >= 1200:
+            return None, None
+        pay = min(monthly_payment, b + interest)
+        paid += pay
+        b = b + interest - pay
+        n += 1
+    return n, round(paid - balance, 2)
+
+
 def after_tax_return(gross: float, fee: float, tax_rate: float,
                      taxable_yield: float | None = None) -> float:
     """Expected yearly return after fees and tax.

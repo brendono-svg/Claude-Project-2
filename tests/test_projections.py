@@ -34,7 +34,7 @@ def test_after_tax_return():
 
 def test_simulation_basics():
     from kiwiwealth.retirement import SimPerson, SimScheme, simulate
-    args = dict(invested=500_000, monthly_invest=0, mortgage_months=0, mortgage_repayment=0,
+    args = dict(invested=500_000, monthly_invest=0, mortgages=[],
                 r_grow=0.0, r_draw=0.0, super_age=65, super_per_person=25_000, plan_age=95)
     # Retired at 65 with $500k at 0% real: $25k Super + $20k from savings lasts 25 years, to age 90.
     r = simulate([SimPerson(65, 65, 0)], target=45_000, **args)
@@ -44,3 +44,15 @@ def test_simulation_basics():
     args["invested"] = 50_000
     assert simulate(young, target=40_000, **args).first_short == 15
     assert simulate(young, target=40_000, lock=False, **args).first_short > 15 * 12
+
+
+def test_loan_schedule_offset():
+    from kiwiwealth.projections import loan_schedule
+    # Fully offset: no interest, repayments are all principal.
+    assert loan_schedule(200_000, 0.0495, 1_324, offset=200_000) == (152, 0.0)
+    # A plain table loan pays interest on the whole balance.
+    months, interest = loan_schedule(92_000, 0.0495, 1_092)
+    assert months == 104 and interest == pytest.approx(21_268, abs=5)
+    # Half offset costs less interest than none.
+    assert loan_schedule(100_000, 0.05, 1_000, offset=50_000)[1] < loan_schedule(100_000, 0.05, 1_000)[1]
+    assert loan_schedule(100_000, 0.06, 400) == (None, None)

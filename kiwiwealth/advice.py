@@ -15,7 +15,7 @@ from . import nz_rules as nz
 from .budget_import import BudgetSummary
 from .profile import Person, Profile
 from .retirement import SimPerson, SimScheme, bisect, simulate
-from .projections import (after_tax_return, future_value, months_to_repay, real_rate,
+from .projections import (after_tax_return, future_value, loan_schedule, months_to_repay, real_rate,
                           required_monthly, total_interest)
 
 PRIORITY_LABELS = {1: "Do now", 2: "Do soon", 3: "Worth doing", 4: "Keep in mind"}
@@ -172,9 +172,8 @@ def rule_emergency_fund(a: Analysis) -> None:
     target_months = a.profile.assumption("emergency_fund_months")
     target = a.monthly_spending * target_months
     cash = sum(c.balance for c in a.profile.cash if c.is_emergency_fund)
-    mort = a.profile.mortgage
-    redraw = max(mort.revolving_limit - mort.balance, 0) if mort.kind == "revolving" else 0
-    available = cash + redraw
+    redraw = sum(max(l.revolving_limit - l.balance, 0) for l in a.profile.loans if l.kind == "revolving")
+    available = cash + redraw + a.profile.offset_cash   # offset cash is accessible
     if available < target:
         a.add(1 if available < target / 2 else 2, "Safety net",
               "Build the emergency fund",
@@ -184,14 +183,14 @@ def rule_emergency_fund(a: Analysis) -> None:
               "An offset or revolving mortgage can hold this money and save interest at the same time.",
               {"target": round(target), "available": round(available),
                "shortfall": round(target - available)})
-    elif available > target * 2.5 and a.profile.liquid_wealth > 0:
+    elif cash > target * 2.5:   # offset cash is already working, so it doesn't count here
         a.add(3, "Safety net", "You may be holding too much cash",
-              f"Accessible cash covers {available / a.monthly_spending:.0f} months. After tax "
+              f"Cash outside any offset account covers {cash / a.monthly_spending:.0f} months of spending. After tax "
               "and inflation, cash usually loses buying power.",
               "Keep the emergency fund, then put the extra on the mortgage or into your "
               "investment plan (cash needed within ~3 years can stay in term deposits).",
               {"target": round(target), "available": round(available),
-               "excess": round(available - target)})
+               "excess": round(cash - target)})
 
 
 def rule_idle_cash(a: Analysis) -> None:
@@ -205,10 +204,16 @@ def rule_idle_cash(a: Analysis) -> None:
            f"more would add about {m(extra)} a year before tax.")
     if top > 0.28:
         why += " A PIE cash fund is taxed at no more than 28%, below your income tax rate."
-    mort = a.profile.mortgage
     action = "Move it to a higher-interest on-call account or a PIE cash fund."
-    if mort.balance > 0:
-        action += (f" While the mortgage lasts, an offset account does better still: it saves {pct(mort.rate, 2)} "
+    loans = [l for l in a.profile.loans if l.balance > 0]
+    room = [l for l in loans if l.kind == "offset" and l.balance > l.offset_cash]
+    if room:
+        l = room[0]
+        action += (f" Better still, your offset account has room for {m(l.balance - l.offset_cash)} more: cash "
+                   f"there saves {pct(l.rate, 2)} interest, tax-free, and stays available.")
+    elif loans and not any(l.kind in ("offset", "revolving") for l in loans):
+        top_loan = max(loans, key=lambda l: l.rate)
+        action += (f" While the mortgage lasts, an offset account does better still: it saves {pct(top_loan.rate, 2)} "
                    "interest, tax-free, and the money stays available.")
     a.add(3, "Safety net", "Your cash is earning very little", why, action,
           {"low_interest_cash": round(total), "extra_interest": round(extra)})
@@ -331,61 +336,101 @@ def rule_pir(a: Analysis) -> None:
                   f"Update your PIR with each provider to {pct(correct)}.")
 
 
+def priority_loan(profile: Profile):
+    """The loan where an extra dollar saves the most interest, or None if nothing is costing interest."""
+    costing = [l for l in profile.loans if l.marginal_rate > 0]
+    return max(costing, key=lambda l: (l.marginal_rate, -l.balance)) if costing else None
+
+
+def loan_label(profile: Profile, loan) -> str:
+    return "the mortgage" if len([l for l in profile.loans if l.balance > 0]) == 1 else loan.name
+
+
+FIXED_CAVEAT = (" This loan is on a fixed rate: keep extra repayments within your bank's allowance, "
+                "or make them at refix, to avoid break fees.")
+
+
 def rule_mortgage(a: Analysis) -> None:
-    mort = a.profile.mortgage
-    if mort.balance <= 0:
+    p = a.profile
+    loans = [l for l in p.loans if l.balance > 0]
+    if not loans:
         a.add(3, "Mortgage", "Keep paying yourself the old mortgage payment",
               "With no mortgage, the money that used to go to the bank is your biggest "
               "wealth-building lever.",
               "Set an automatic monthly investment equal to your old repayment.")
         return
     pir = max(a.pirs.values())
-    invest_r = fund_after_tax(a, a.profile.preferences.risk_tolerance, 0.004, pir)
-    months = months_to_repay(mort.balance, mort.rate, mort.monthly_repayment) if mort.monthly_repayment else None
-    interest = total_interest(mort.balance, mort.rate, mort.monthly_repayment) if mort.monthly_repayment else None
-    nums = {"balance": mort.balance, "rate": mort.rate, "months_left": months,
-            "interest_left": interest, "invest_after_tax_return": round(invest_r, 4)}
+    risk = p.preferences.risk_tolerance
+    invest_r = fund_after_tax(a, risk, 0.004, pir)
+    pri = priority_loan(p)
 
-    if mort.rate >= invest_r:
-        verdict = (f"Your mortgage costs {pct(mort.rate, 2)}. Paying it down is a guaranteed, tax-free return at that rate. "
-                   f"A {a.profile.preferences.risk_tolerance} fund might return about {pct(invest_r)} after fees and "
-                   "tax, and that isn't guaranteed. Paying off the mortgage wins.")
-        action = "Put spare cash on the mortgage until it's gone (watch fixed-rate break fees and lump-sum limits)."
-    elif mort.rate >= invest_r - 0.015:
-        verdict = (f"It's close: the mortgage costs {pct(mort.rate, 2)} (guaranteed), and a "
-                   f"{a.profile.preferences.risk_tolerance} fund might return about {pct(invest_r)} after fees and "
-                   "tax (not guaranteed). Adjusted for risk, paying it off is at least as good, and it's nearly done.")
-        action = ("Put lump sums on the mortgage at refix time (or into an offset account), while keeping "
-                  "your regular fund contributions going so the habit is in place.")
+    if pri is None:
+        a.add(3, "Mortgage", "Your home lending is fully offset",
+              "Your offset cash covers everything you owe, so no interest is being charged.",
+              "Keep the cash in the offset account. New savings can go to your investment plan.")
     else:
-        verdict = (f"Investing might return about {pct(invest_r)} after tax vs a {pct(mort.rate, 2)} "
-                   "mortgage, but that edge isn't guaranteed. With a small balance left, "
-                   "paying it off still makes sense for many families.")
-        action = ("Consider splitting the spare cash: some on the mortgage, and some starting your "
-                  "investment habit now.")
-    a.add(2, "Mortgage", "Finish the mortgage, then redirect the repayment", verdict, action, nums)
+        label = loan_label(p, pri)
+        months, interest = loan_schedule(pri.balance, pri.rate, pri.monthly_repayment, pri.offset_cash if pri.kind == "offset" else 0)
+        nums = {"loan": pri.name, "balance": pri.balance, "rate": pri.rate, "months_left": months,
+                "interest_left": interest, "invest_after_tax_return": round(invest_r, 4)}
+        if pri.rate >= invest_r:
+            verdict = (f"{label.capitalize() if label == 'the mortgage' else label} costs {pct(pri.rate, 2)}. Paying it down is a "
+                       f"guaranteed, tax-free return at that rate. A {risk} fund might return about {pct(invest_r)} after fees and "
+                       "tax, and that isn't guaranteed. Paying off the loan wins.")
+            action = "Put spare cash on it until it's gone."
+        elif pri.rate >= invest_r - 0.015:
+            verdict = (f"It's close: {label} costs {pct(pri.rate, 2)} (guaranteed), and a "
+                       f"{risk} fund might return about {pct(invest_r)} after fees and "
+                       "tax (not guaranteed). Adjusted for risk, paying it off is at least as good.")
+            action = ("Put spare cash on it, while keeping any regular fund contributions going so the "
+                      "investing habit is in place.")
+        else:
+            verdict = (f"Investing might return about {pct(invest_r)} after tax vs {pct(pri.rate, 2)} on "
+                       f"{label}, but that edge isn't guaranteed. Paying it off still makes sense for many families.")
+            action = "Consider splitting the spare cash: some on the loan, and some starting your investment habit now."
+        others = [l for l in loans if l is not pri and l.marginal_rate == 0]
+        if others:
+            verdict += (f" Extra repayments on {others[0].name} save nothing while it's fully offset, "
+                        f"so {pri.name} is the one to target.")
+        if interest is not None:
+            verdict += f" About {m(interest)} of interest is left at your current repayments."
+        if pri.fixed:
+            action += FIXED_CAVEAT
+        title = "Finish the mortgage, then redirect the repayment" if len(loans) == 1 else f"Pay down {pri.name} first"
+        a.add(2, "Mortgage", title, verdict, action, nums)
 
-    if mort.kind == "table" and mort.balance < 150_000:
-        a.add(3, "Mortgage", "Consider an offset or revolving portion",
-              "Spare cash and your emergency fund sitting against the loan cut interest "
-              "and can still be accessed.",
-              "Ask your bank about moving part of the loan to offset/revolving when the fixed term ends.",
-              {"fixed_until": mort.fixed_until})
+        for l in loans:
+            if l.kind == "offset" and l.offset_cash >= l.balance:
+                excess = l.offset_cash - l.balance
+                why = (f"No interest is being charged on {l.name}, so each {m(l.monthly_repayment)}/month repayment "
+                       "now leaves cash in the offset account that offsets nothing.")
+                if excess > 0:
+                    why += f" {m(excess)} is already above the loan balance."
+                a.add(2, "Mortgage", f"{l.name}: your offset cash covers the whole loan", why,
+                      f"As the loan shrinks, move the cash above its balance onto {pri.name}. At the next refix, "
+                      f"ask your bank to move part of {pri.name} into the offset portion so all your offset cash keeps working."
+                      + (FIXED_CAVEAT if pri.fixed else ""),
+                      {"excess": round(excess), "monthly_repayment": l.monthly_repayment})
 
-    if months is not None and mort.monthly_repayment:
-        horizon = first_retirement_years(a.profile)
-        invest_years = horizon - months / 12
-        if invest_years > 0:
-            real = fund_after_tax(a, a.profile.preferences.risk_tolerance, 0.004, pir, True)
-            fv = future_value(0, mort.monthly_repayment, real, invest_years)
-            a.add(1, "Investing", "Plan now where the mortgage payment goes once it's paid off",
-                  f"The mortgage should be gone in about {months} months. Investing "
-                  f"{m(mort.monthly_repayment)}/month after that could grow to about {m(fv)} "
-                  f"in today's dollars by retirement.",
-                  "Set up the automatic investment for the day after the last repayment, so the "
-                  "money isn't absorbed into everyday spending.",
-                  {"monthly": mort.monthly_repayment, "years_investing": round(invest_years, 1),
-                   "value_at_retirement_todays_dollars": round(fv)})
+        if not any(l.kind in ("offset", "revolving") for l in loans) and sum(l.balance for l in loans) < 150_000:
+            a.add(3, "Mortgage", "Consider an offset or revolving portion",
+                  "Spare cash and your emergency fund sitting against the loan cut interest "
+                  "and can still be accessed.",
+                  "Ask your bank about moving part of the loan to offset/revolving when the fixed term ends.")
+
+        if months is not None and pri.monthly_repayment:
+            invest_years = first_retirement_years(p) - months / 12
+            if invest_years > 0:
+                real = fund_after_tax(a, risk, 0.004, pir, True)
+                fv = future_value(0, pri.monthly_repayment, real, invest_years)
+                a.add(1, "Investing", "Plan now where the mortgage payment goes once it's paid off",
+                      f"{label[0].upper() + label[1:]} should be gone in about {months} months. Investing "
+                      f"{m(pri.monthly_repayment)}/month after that could grow to about {m(fv)} "
+                      f"in today's dollars by retirement.",
+                      "Set up the automatic investment for the day after the last repayment, so the "
+                      "money isn't absorbed into everyday spending.",
+                      {"monthly": pri.monthly_repayment, "years_investing": round(invest_years, 1),
+                       "value_at_retirement_todays_dollars": round(fv)})
 
 
 def rule_concentration(a: Analysis) -> None:
@@ -580,12 +625,27 @@ def rule_idle_surplus(a: Analysis) -> None:
     horizon = first_retirement_years(p)
     real = fund_after_tax(a, p.preferences.risk_tolerance, 0.004, max(a.pirs.values()), True)
     fv = future_value(0, idle, real, horizon)
-    a.add(1, "Investing", f"About {m(idle)}/month of surplus has no job",
-          f"After goal savings and current regular investments, about {m(idle)}/month is unallocated. "
-          f"Invested, that's about {m(fv)} in today's dollars by retirement. Otherwise it tends to get spent.",
-          "Split it on payday by automatic transfer: top up the emergency fund first, then the mortgage "
-          "(while it lasts) or the core funds.",
-          {"idle_monthly": round(idle), "value_at_retirement": round(fv)})
+    why = (f"After goal savings and current regular investments, about {m(idle)}/month is unallocated. "
+           f"Invested, that's about {m(fv)} in today's dollars by retirement. Otherwise it tends to get spent.")
+    action = "Split it on payday by automatic transfer: top up the emergency fund first, then the core funds."
+    nums = {"idle_monthly": round(idle), "value_at_retirement": round(fv)}
+    pri = priority_loan(p)
+    if pri is not None:
+        label = loan_label(p, pri)
+        off = pri.offset_cash if pri.kind == "offset" else 0
+        slow_m, slow_i = loan_schedule(pri.balance, pri.rate, pri.monthly_repayment, off)
+        fast_m, fast_i = loan_schedule(pri.balance, pri.rate, pri.monthly_repayment + idle, off)
+        if fast_m is not None:
+            if slow_m is not None:
+                why += (f" Put on {label} instead, it would clear the loan in about {fast_m} months "
+                        f"instead of {slow_m}, saving about {m(slow_i - fast_i)} of interest.")
+            else:
+                why += f" Put on {label} instead, it would clear the loan in about {fast_m} months."
+            nums.update(payoff_months=fast_m, payoff_months_now=slow_m,
+                        interest_saved=None if slow_i is None else round(slow_i - fast_i))
+        action = (f"Split it on payday by automatic transfer: top up the emergency fund first, then {label} "
+                  "until it's gone, then the core funds.") + (FIXED_CAVEAT if pri.fixed else "")
+    a.add(1, "Investing", f"About {m(idle)}/month of surplus has no job", why, action, nums)
 
 
 def sim_inputs(a: Analysis) -> dict[str, Any]:
@@ -605,17 +665,13 @@ def sim_inputs(a: Analysis) -> dict[str, Any]:
                      for f in flows]))
     r_grow = fund_after_tax(a, prefs.risk_tolerance, 0.004, pir, True)
     r_draw = min(r_grow, fund_after_tax(a, "balanced", 0.004, pir, True))
-    mort = p.mortgage
-    if mort.balance <= 0:
-        months, repayment = 0, 0.0   # nothing to redirect: the mortgage rule covers the old payment
-    else:
-        months = months_to_repay(mort.balance, mort.rate, mort.monthly_repayment) if mort.monthly_repayment else None
-        repayment = mort.monthly_repayment
+    mortgages = [(loan_schedule(l.balance, l.rate, l.monthly_repayment, l.offset_cash if l.kind == "offset" else 0)[0],
+                  l.monthly_repayment) for l in p.loans if l.balance > 0]
     sup = nz.rule("nz_super", a.on)
     per_person = sup["couple_annual_net"] / 2 if len(p.people) >= 2 else sup["single_living_alone_annual_net"]
     return dict(people=people, invested=p.total_investments,
                 monthly_invest=sum(h.monthly_contribution for h in p.holdings),
-                mortgage_months=months, mortgage_repayment=repayment,
+                mortgages=mortgages,
                 target=prefs.retirement_income_target, r_grow=r_grow, r_draw=r_draw,
                 super_age=super_age(a), super_per_person=per_person,
                 plan_age=p.assumption("plan_to_age"))

@@ -229,6 +229,11 @@ function migrate(P) {
     if (!Array.isArray(p.schemes)) p.schemes = p.ks ? [{ name: "KiwiSaver", kind: "kiwisaver", balance: +p.ksBalance || 0, fund: p.ksFund || "balanced", fee: +p.ksFee || 0, pie: true, vested: 1, voluntary: +p.ksVoluntary || 0, member: { amount: +p.ksEmp || 0, unit: "pct" }, employer: { amount: +p.ksEmployer || 0, unit: "pct", afterTax: false } }] : [];
     for (const k of ["ks", "ksBalance", "ksEmp", "ksEmployer", "ksVoluntary", "ksFund", "ksFee"]) delete p[k];
   }
+  if (P && !Array.isArray(P.loans)) {
+    const m = P.mortgage || {};
+    P.loans = (+m.balance || 0) > 0 || (+m.repayment || 0) > 0 ? [{ name: "Mortgage", balance: +m.balance || 0, rate: +m.rate || 0, repayment: +m.repayment || 0, kind: m.kind || "table", fixed: false, offsetCash: 0, limit: +m.limit || 0 }] : [];
+  }
+  if (P) delete P.mortgage;
   // A holding whose owner isn't a current person (a deleted person, or a leftover example name) becomes joint.
   const names = new Set((P?.people || []).map(p => p.name));
   for (const h of P?.holdings || []) if (h.owner !== "joint" && !names.has(h.owner)) h.owner = "joint";
@@ -240,6 +245,18 @@ function fv(pv, monthly, rate, years) { const n = Math.round(years * 12), r = ra
 function needMonthly(target, pv, rate, years) { const n = Math.round(years * 12); if (n <= 0) return Math.max(target - pv, 0); const r = rate / 12, s = target - pv * (1 + r) ** n; if (s <= 0) return 0; return r === 0 ? s / n : s * r / ((1 + r) ** n - 1); }
 function monthsToRepay(b, rate, pay) { if (b <= 0) return 0; const r = rate / 12; if (r === 0) return pay > 0 ? Math.ceil(b / pay) : null; if (pay <= b * r) return null; return Math.ceil(-Math.log(1 - r * b / pay) / Math.log(1 + r)); }
 function totalInterest(b, rate, pay) { const n = monthsToRepay(b, rate, pay); if (n == null) return null; let paid = 0, x = b; const r = rate / 12; for (let i = 0; i < n; i++) { const it = x * r, p = Math.min(pay, x + it); paid += p; x = x + it - p; } return paid - b; }
+// Months to repay and total interest; interest is charged only on the balance not covered by offset cash. Mirrors loan_schedule() in projections.py.
+function loanSchedule(balance, rate, pay, offset = 0) {
+  if (balance <= 0) return [0, 0];
+  if (pay <= 0) return [null, null];
+  const r = rate / 12; let b = balance, paid = 0, n = 0;
+  while (b > .005) {
+    const interest = Math.max(b - offset, 0) * r;
+    if (pay <= interest || n >= 1200) return [null, null];
+    const x = Math.min(pay, b + interest); paid += x; b = b + interest - x; n++;
+  }
+  return [n, Math.round((paid - balance) * 100) / 100];
+}
 const afterTax = (g, fee, t, ty) => g - fee - t * (ty == null ? g : Math.min(ty, g));
 const realRate = (n, i) => (1 + n) / (1 + i) - 1;
 
@@ -267,13 +284,14 @@ function simulate(o) {
       const paying = s.kind === "kiwisaver" ? working[i] && !over[i] : working[i];
       if (locked) bal[i][j] = bal[i][j] * (1 + s.rate / 12) + (paying ? s.contribution / 12 : 0);
     }));
-    const mortgageOpen = o.mortgageMonths == null || t < o.mortgageMonths;
+    let owing = 0, freed = 0;   // each loan: { months until repaid (null = never), repayment }
+    for (const l of o.mortgages) { if (l.months == null || t < l.months) owing += l.repayment; else freed += l.repayment; }
     if (t < drawStart) {
       acc = acc * (1 + o.rGrow / 12) + o.monthlyInvest + extra;
-      if (!mortgageOpen) acc += o.mortgageRepayment;
+      acc += freed;
     } else {
       acc *= 1 + o.rDraw / 12;
-      let need = o.target / 12 + (mortgageOpen ? o.mortgageRepayment : 0);
+      let need = o.target / 12 + owing;
       people.forEach((p, i) => { if (working[i]) need -= p.netPay / 12; });
       over.forEach(ov => { if (ov) need -= o.superPerPerson / 12; });
       if (need > 0) {
@@ -304,8 +322,16 @@ function analyse(P, budget, on = new Date()) {
   const fund = (type, fee, t, real) => { const r = afterTax(ASSUME.returns[type], fee, t, ASSUME.ty[type]); return real ? realRate(r, ASSUME.inflation) : r; };
   const sum = (xs, f) => xs.reduce((a, x) => a + (+f(x) || 0), 0);
   const allSchemes = people.flatMap(p => p.schemes || []);
-  const cash = sum(P.cash, c => c.balance), inv = sum(P.holdings, h => h.value), ks = sum(allSchemes.filter(s => s.kind === "kiwisaver"), s => s.balance), wp = sum(allSchemes.filter(s => s.kind === "workplace"), s => s.balance);
-  const mort = P.mortgage, debt = (+mort.balance || 0) + sum(P.debts, d => d.balance);
+  const cashOnly = sum(P.cash, c => c.balance), inv = sum(P.holdings, h => h.value), ks = sum(allSchemes.filter(s => s.kind === "kiwisaver"), s => s.balance), wp = sum(allSchemes.filter(s => s.kind === "workplace"), s => s.balance);
+  const loans = (P.loans || []).filter(l => (+l.balance || 0) > 0);
+  const offOf = l => l.kind === "offset" ? +l.offsetCash || 0 : 0;
+  const marginalOf = l => l.kind === "offset" && offOf(l) >= +l.balance ? 0 : +l.rate || 0;   // what an extra dollar repaid saves
+  const offsetCash = sum(P.loans || [], offOf);
+  const debt = sum(P.loans || [], l => l.balance) + sum(P.debts, d => d.balance);
+  const pri = loans.filter(l => marginalOf(l) > 0).reduce((a, l) => !a || marginalOf(l) > marginalOf(a) || (marginalOf(l) === marginalOf(a) && +l.balance < +a.balance) ? l : a, null);
+  const loanLabel = l => loans.length === 1 ? "the mortgage" : l.name;
+  const FIXED_CAVEAT = " This loan is on a fixed rate: keep extra repayments within your bank's allowance, or make them at refix, to avoid break fees.";
+  const cash = cashOnly + offsetCash;
   const assets = (+P.home || 0) + (+P.other || 0) + cash + inv + ks + wp;
   const retireOf = p => p.retireAge === "" || p.retireAge == null ? +P.prefs.retireAge : +p.retireAge;
   const supAge = ASSUME.superAge || rule("nz_super", on).age;
@@ -329,20 +355,22 @@ function analyse(P, budget, on = new Date()) {
   // Emergency fund
   if (spending) {
     const target = spending * ASSUME.efMonths;
-    const redraw = mort.kind === "revolving" ? Math.max((+mort.limit || 0) - (+mort.balance || 0), 0) : 0;
-    const avail = sum(P.cash.filter(c => c.emergency), c => c.balance) + redraw;
+    const redraw = sum((P.loans || []).filter(l => l.kind === "revolving"), l => Math.max((+l.limit || 0) - (+l.balance || 0), 0));
+    const efCash = sum(P.cash.filter(c => c.emergency), c => c.balance), avail = efCash + redraw + offsetCash;   // offset cash is accessible
     if (avail < target) add(avail < target / 2 ? 1 : 2, "Safety net", "Build the emergency fund", `You have about ${(avail / spending).toFixed(1)} months of spending in accessible cash; the aim is ${ASSUME.efMonths} months.`, "Automate a weekly transfer to an on-call or PIE cash fund until it's full. An offset or revolving mortgage can hold this money and save interest at the same time.");
-    else if (avail > target * 2.5) add(3, "Safety net", "You may be holding too much cash", `Accessible cash covers ${Math.round(avail / spending)} months. After tax and inflation, cash usually loses buying power.`, `Keep about ${$(target)} as the emergency fund, then put the extra on the mortgage or into your investment plan.`);
+    else if (efCash > target * 2.5) add(3, "Safety net", "You may be holding too much cash", `Cash outside any offset account covers ${Math.round(efCash / spending)} months of spending. After tax and inflation, cash usually loses buying power.`, `Keep about ${$(target)} as the emergency fund, then put the extra on the mortgage or into your investment plan.`);
   }
 
   // Cash earning very little
   const lowCash = P.cash.filter(c => +c.balance >= 5000 && (+c.rate || 0) < .02);
   if (lowCash.length) {
-    const tot = sum(lowCash, c => c.balance), extraInt = tot * .03, mbal = +P.mortgage.balance || 0;
+    const tot = sum(lowCash, c => c.balance), extraInt = tot * .03;
     let why = `${$(tot)} is earning under 2%. An on-call savings account or cash fund paying around 3% more would add about ${$(extraInt)} a year before tax.`;
     if (Math.max(...Object.values(marg)) > .28) why += " A PIE cash fund is taxed at no more than 28%, below your income tax rate.";
     let action = "Move it to a higher-interest on-call account or a PIE cash fund.";
-    if (mbal > 0) action += ` While the mortgage lasts, an offset account does better still: it saves ${pc(+P.mortgage.rate, 2)} interest, tax-free, and the money stays available.`;
+    const room = loans.find(l => l.kind === "offset" && +l.balance > offOf(l));
+    if (room) action += ` Better still, your offset account has room for ${$(room.balance - offOf(room))} more: cash there saves ${pc(+room.rate, 2)} interest, tax-free, and stays available.`;
+    else if (loans.length && !loans.some(l => l.kind === "offset" || l.kind === "revolving")) action += ` While the mortgage lasts, an offset account does better still: it saves ${pc(Math.max(...loans.map(l => +l.rate || 0)), 2)} interest, tax-free, and the money stays available.`;
     add(3, "Safety net", "Your cash is earning very little", why, action);
   }
 
@@ -390,22 +418,30 @@ function analyse(P, budget, on = new Date()) {
     else if (Math.abs(+p.currentPir - right) > 1e-9) add(1, "Tax", `${p.name}: PIR is set to ${pc(+p.currentPir)} but should be ${pc(right)}`, +p.currentPir < right ? "Too low means a tax bill at year end." : "You're overpaying tax on your funds, and IRD won't refund it.", `Update your PIR with each provider to ${pc(right)}.`);
   }
 
-  // Mortgage
-  const mb = +mort.balance || 0, mr = +mort.rate || 0, mp = +mort.repayment || 0;
-  const months = mb > 0 && mp ? monthsToRepay(mb, mr, mp) : (mb > 0 ? null : 0);
-  if (mb <= 0) add(3, "Mortgage", "Keep paying yourself the old mortgage payment", "With no mortgage, the money that used to go to the bank is your biggest wealth-building lever.", "Set an automatic monthly investment equal to your old repayment.");
+  // Home loans
+  let months = 0;   // months until the priority loan is gone (null = never at current payments)
+  if (!loans.length) add(3, "Mortgage", "Keep paying yourself the old mortgage payment", "With no mortgage, the money that used to go to the bank is your biggest wealth-building lever.", "Set an automatic monthly investment equal to your old repayment.");
+  else if (!pri) add(3, "Mortgage", "Your home lending is fully offset", "Your offset cash covers everything you owe, so no interest is being charged.", "Keep the cash in the offset account. New savings can go to your investment plan.");
   else {
-    const ir = fund(risk, .004, maxPir, false);
+    const ir = fund(risk, .004, maxPir, false), label = loanLabel(pri), Label = label[0].toUpperCase() + label.slice(1), pr = +pri.rate, pp = +pri.repayment || 0;
+    const [mths, intLeft] = loanSchedule(+pri.balance, pr, pp, offOf(pri)); months = mths;
     let why, action;
-    if (mr >= ir) { why = `Your mortgage costs ${pc(mr, 2)}. Paying it down is a guaranteed, tax-free return at that rate. A ${risk} fund might return about ${pc(ir)} after fees and tax, and that isn't guaranteed. Paying off the mortgage wins.`; action = "Put spare cash on the mortgage until it's gone (watch fixed-rate break fees and lump-sum limits)."; }
-    else if (mr >= ir - .015) { why = `It's close: the mortgage costs ${pc(mr, 2)} (guaranteed), and a ${risk} fund might return about ${pc(ir)} after fees and tax (not guaranteed). Adjusted for risk, paying it off is at least as good, and it's nearly done.`; action = "Put lump sums on the mortgage at refix time (or into an offset account), while keeping regular fund contributions going so the habit is in place."; }
-    else { why = `Investing might return about ${pc(ir)} after tax vs a ${pc(mr, 2)} mortgage, but that edge isn't guaranteed.`; action = "Consider splitting spare cash: some on the mortgage, and some starting your investment habit now."; }
-    const intLeft = mp ? totalInterest(mb, mr, mp) : null;
-    add(2, "Mortgage", "Finish the mortgage, then redirect the repayment", why + (intLeft != null ? ` About ${$(intLeft)} of interest is left at your current repayments.` : ""), action);
-    if (mort.kind === "table" && mb < 150000) add(3, "Mortgage", "Consider an offset or revolving portion", "Spare cash and your emergency fund sitting against the loan cut interest and can still be accessed.", "Ask your bank about moving part of the loan to offset/revolving when the fixed term ends.");
-    if (months != null && mp && horizon - months / 12 > 0) {
-      const v = fv(0, mp, rInvReal, horizon - months / 12);
-      add(1, "Investing", "Plan now where the mortgage payment goes once it's paid off", `The mortgage should be gone in about ${months} months. Investing ${$(mp)}/month after that could grow to about ${$(v)} in today's dollars by retirement.`, "Set up the automatic investment for the day after the last repayment, so the money isn't absorbed into everyday spending.");
+    if (pr >= ir) { why = `${Label} costs ${pc(pr, 2)}. Paying it down is a guaranteed, tax-free return at that rate. A ${risk} fund might return about ${pc(ir)} after fees and tax, and that isn't guaranteed. Paying off the loan wins.`; action = "Put spare cash on it until it's gone."; }
+    else if (pr >= ir - .015) { why = `It's close: ${label} costs ${pc(pr, 2)} (guaranteed), and a ${risk} fund might return about ${pc(ir)} after fees and tax (not guaranteed). Adjusted for risk, paying it off is at least as good.`; action = "Put spare cash on it, while keeping any regular fund contributions going so the investing habit is in place."; }
+    else { why = `Investing might return about ${pc(ir)} after tax vs ${pc(pr, 2)} on ${label}, but that edge isn't guaranteed. Paying it off still makes sense for many families.`; action = "Consider splitting the spare cash: some on the loan, and some starting your investment habit now."; }
+    const other = loans.find(l => l !== pri && marginalOf(l) === 0);
+    if (other) why += ` Extra repayments on ${other.name} save nothing while it's fully offset, so ${pri.name} is the one to target.`;
+    if (intLeft != null) why += ` About ${$(intLeft)} of interest is left at your current repayments.`;
+    if (pri.fixed) action += FIXED_CAVEAT;
+    add(2, "Mortgage", loans.length === 1 ? "Finish the mortgage, then redirect the repayment" : `Pay down ${pri.name} first`, why, action);
+    for (const l of loans) if (l.kind === "offset" && offOf(l) >= +l.balance) {
+      const excess = offOf(l) - l.balance;
+      add(2, "Mortgage", `${l.name}: your offset cash covers the whole loan`, `No interest is being charged on ${l.name}, so each ${$(+l.repayment || 0)}/month repayment now leaves cash in the offset account that offsets nothing.` + (excess > 0 ? ` ${$(excess)} is already above the loan balance.` : ""), `As the loan shrinks, move the cash above its balance onto ${pri.name}. At the next refix, ask your bank to move part of ${pri.name} into the offset portion so all your offset cash keeps working.` + (pri.fixed ? FIXED_CAVEAT : ""));
+    }
+    if (!loans.some(l => l.kind === "offset" || l.kind === "revolving") && sum(loans, l => l.balance) < 150000) add(3, "Mortgage", "Consider an offset or revolving portion", "Spare cash and your emergency fund sitting against the loan cut interest and can still be accessed.", "Ask your bank about moving part of the loan to offset/revolving when the fixed term ends.");
+    if (months != null && pp && horizon - months / 12 > 0) {
+      const v = fv(0, pp, rInvReal, horizon - months / 12);
+      add(1, "Investing", "Plan now where the mortgage payment goes once it's paid off", `${Label} should be gone in about ${months} months. Investing ${$(pp)}/month after that could grow to about ${$(v)} in today's dollars by retirement.`, "Set up the automatic investment for the day after the last repayment, so the money isn't absorbed into everyday spending.");
     }
   }
 
@@ -475,7 +511,14 @@ function analyse(P, budget, on = new Date()) {
   const regular = sum(P.holdings, h => h.monthly);
   if (surplus != null && surplus - need - regular >= 200) {
     const idle = surplus - need - regular;
-    add(1, "Investing", `About ${$(idle)}/month of surplus has no job`, `After goal savings and current regular investments, about ${$(idle)}/month is unallocated. Invested, that's about ${$(fv(0, idle, rInvReal, horizon))} in today's dollars by retirement. Otherwise it tends to get spent.`, "Split it on payday by automatic transfer: top up the emergency fund first, then the mortgage (while it lasts) or the core funds.");
+    let why = `After goal savings and current regular investments, about ${$(idle)}/month is unallocated. Invested, that's about ${$(fv(0, idle, rInvReal, horizon))} in today's dollars by retirement. Otherwise it tends to get spent.`;
+    let action = "Split it on payday by automatic transfer: top up the emergency fund first, then the core funds.";
+    if (pri) {
+      const label = loanLabel(pri), [slowM, slowI] = loanSchedule(+pri.balance, +pri.rate, +pri.repayment || 0, offOf(pri)), [fastM, fastI] = loanSchedule(+pri.balance, +pri.rate, (+pri.repayment || 0) + idle, offOf(pri));
+      if (fastM != null) why += slowM != null ? ` Put on ${label} instead, it would clear the loan in about ${fastM} months instead of ${slowM}, saving about ${$(slowI - fastI)} of interest.` : ` Put on ${label} instead, it would clear the loan in about ${fastM} months.`;
+      action = `Split it on payday by automatic transfer: top up the emergency fund first, then ${label} until it's gone, then the core funds.` + (pri.fixed ? FIXED_CAVEAT : "");
+    }
+    add(1, "Investing", `About ${$(idle)}/month of surplus has no job`, why, action);
   }
 
   // Retirement: month-by-month simulation (see simulate)
@@ -485,7 +528,7 @@ function analyse(P, budget, on = new Date()) {
     people: people.map(p => ({ age: +p.age, retireAge: retireOf(p),
       netPay: takeHome(+p.salary || 0, 0, p.sl, on) - sum(flowsBy[p.name], f => f.member),
       schemes: flowsBy[p.name].map(f => ({ kind: f.s.kind, balance: +f.s.balance || 0, rate: fund(f.s.fund, +f.s.fee, schemeTax(p, f.s), true), contribution: f.total })) })),
-    invested: inv, monthlyInvest: regular, mortgageMonths: mb <= 0 ? 0 : (mp ? months : null), mortgageRepayment: mb <= 0 ? 0 : mp,
+    invested: inv, monthlyInvest: regular, mortgages: loans.map(l => ({ months: loanSchedule(+l.balance, +l.rate || 0, +l.repayment || 0, offOf(l))[0], repayment: +l.repayment || 0 })),
     target, rGrow: rInvReal, rDraw, superAge: supAge, superPerPerson: people.length > 1 ? sup.couple / 2 : sup.single, planAge: ASSUME.planAge };
   const run = extra => simulate({ ...simIn, ...extra }), ok = r => r.shortTotal < 1;
   const base = run({}), sustainable = bisect(x => ok(run({ target: x })), 0, 1e6);
@@ -505,7 +548,7 @@ function analyse(P, budget, on = new Date()) {
   if (+P.dependants > 0 && !P.incomeCover) add(2, "Protection", "Check life and income-protection cover", "Your plan relies on your incomes. ACC only covers accidents, not illness.", "Get quotes or speak to an insurance adviser. Cover should fall as debt falls and wealth grows.");
 
   recs.sort((a, b) => a.priority - b.priority);
-  return { recs, goals, pirs, marg, income, spending, surplus, cats, months,
+  return { recs, goals, pirs, marg, income, spending, surplus, cats, months: !loans.length ? 0 : !pri ? null : months, priLoan: pri ? pri.name : null, loanCount: loans.length,
     sheet: { home: +P.home || 0, ks, wp, inv, cash, other: +P.other || 0, debt, assets, net: assets - debt }, flowsBy,
     ret: { horizon: yearsTo, first: first.name, ksAt: at.ks, wpAt: at.wp, invAt: at.acc, projected, superAmt: simIn.superPerPerson * people.length, sustainable, target, extra, lockedProblem, shortYear: base.firstShort == null ? null : on.getFullYear() + Math.floor(base.firstShort / 12), real: rInvReal, rDraw, series } };
 }
@@ -561,7 +604,7 @@ const EXAMPLE = {
     { name: "NZ shares", owner: "Alex", type: "nz_listed", value: 9000, cost: 7500, fee: 0, monthly: 0, single: false },
     { name: "US shares", owner: "Alex", type: "direct_offshore", value: 44000, cost: 41500, fee: 0, monthly: 0, single: false },
   ],
-  mortgage: { balance: 68000, rate: .0495, repayment: 3200, kind: "table", limit: 0 },
+  loans: [{ name: "Mortgage", balance: 68000, rate: .0495, repayment: 3200, kind: "table", fixed: true, offsetCash: 0, limit: 0 }],
   debts: [],
   goals: [{ name: "Family trip to Europe", target: 25000, year: 2028, saved: 6000, priority: 2 }, { name: "Kids' university fund", target: 60000, year: 2036, saved: 5000, priority: 1 }, { name: "Car replacement", target: 30000, year: 2030, saved: 0, priority: 2 }],
   budget: { income: 12000, spending: 7400 },
@@ -569,7 +612,7 @@ const EXAMPLE = {
 };
 const BLANK_PROFILE = { example: false, household: "Our household", home: 0, other: 0, dependants: 0, wills: false, incomeCover: false,
   people: [{ name: "Person 1", age: 40, salary: 0, other: 0, pie: 0, priorTaxable: "", priorPie: "", currentPir: "", retireAge: "", sl: false, schemes: [] }],
-  cash: [], holdings: [], mortgage: { balance: 0, rate: 0, repayment: 0, kind: "table", limit: 0 }, debts: [], goals: [],
+  cash: [], holdings: [], loans: [], debts: [], goals: [],
   budget: { income: "", spending: "" }, prefs: { risk: "growth", shares: true, retireAge: 65, target: 70000, maxShare: .10 } };
 const KEY = "kiwiwealth.v1";
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -704,7 +747,7 @@ function renderPlan(A) {
       <div class="legend">${parts.filter(([, v]) => v > 0).map(([k, v, c]) => `<span><i style="background:${c}"></i>${k} ${pc(v / total, 0)}</span>`).join("")}</div></div>
     </section>
     <section class="stats">
-      <div class="stat"><span class="v">${A.months == null ? "—" : A.months === 0 ? "Free" : A.months + " mo"}</span><span class="k">Mortgage-free in</span></div>
+      <div class="stat"><span class="v">${A.loanCount === 0 ? "Free" : A.months == null ? "—" : A.months + " mo"}</span><span class="k">${A.loanCount > 1 && A.priLoan ? esc(A.priLoan) + " paid off in" : A.loanCount > 0 && !A.priLoan ? "Lending fully offset" : "Mortgage-free in"}</span></div>
       <div class="stat"><span class="v">${rate == null ? "—" : pc(rate, 0)}</span><span class="k">Savings rate${csvBudget ? " (from CSV)" : ""}</span></div>
       <div class="stat"><span class="v">${$(A.ret.sustainable)}</span><span class="k">Retirement income/yr your savings support</span></div>
     </section>
@@ -808,6 +851,7 @@ const F = {
   goals: [["name", "Goal", "text"], ["target", "Target", "money"], ["year", "Year", "num"], ["saved", "Saved so far", "money"], ["priority", "Priority", "select", [[1, "Must have"], [2, "Important"], [3, "Nice to have"]]]],
 };
 const BLANK = { person: { name: "", age: 40, salary: 0, other: 0, pie: 0, priorTaxable: "", priorPie: "", currentPir: "", retireAge: "", sl: false, schemes: [] },
+  loan: { name: "Home loan", kind: "table", balance: 0, rate: .05, repayment: 0, fixed: false, offsetCash: 0, limit: 0 },
   kiwisaver: { name: "KiwiSaver", kind: "kiwisaver", balance: 0, fund: "balanced", fee: .006, pie: true, vested: 1, voluntary: 0, member: { amount: .035, unit: "pct" }, employer: { amount: .035, unit: "pct", afterTax: false } },
   workplace: { name: "Workplace savings scheme", kind: "workplace", balance: 0, fund: "growth", fee: .005, pie: true, vested: 1, voluntary: 0, member: { amount: 0, unit: "fortnight" }, employer: { amount: .07, unit: "pct", afterTax: false } }, cash: { name: "Savings", balance: 0, rate: .03, emergency: true }, holdings: { name: "New fund", owner: "joint", type: "pie", value: 0, cost: 0, fee: .004, monthly: 0, single: false }, debts: { name: "Credit card", balance: 0, rate: .2 }, goals: { name: "New goal", target: 10000, year: new Date().getFullYear() + 3, saved: 0, priority: 2 } };
 function input(path, [key, label, kind, opts], obj, wide) {
@@ -841,10 +885,22 @@ function schemeItem(pi, p) {
 function updateHints() {
   document.querySelectorAll("[data-hint]").forEach(h => { try { const ps = h.dataset.hint.split("."); const c = getPath(h.dataset.hint), p = state.people[+ps[1]]; h.textContent = hintText(c, +p.salary || 0, !!h.dataset.emp); } catch {} });
 }
+const LOAN_KINDS = [["table", "Table loan"], ["offset", "Offset loan"], ["revolving", "Revolving credit"]];
+function loansFieldset(S) {
+  return `<fieldset><legend>Home loans</legend>
+    <p class="small muted">Add each loan separately. For an offset loan, enter the cash in its offset accounts here and not under Cash accounts.</p>
+    ${S.loans.map((l, i) => { const path = `loans.${i}`; return `<div class="item"><div class="item-head"><strong>${esc(l.name || "Home loan")}</strong><button class="link" type="button" data-del="${path}">Remove</button></div>
+      <div class="fields">${input(path, ["name", "Name", "text"], l)}${input(path, ["kind", "Loan type", "select", LOAN_KINDS], l)}
+      ${input(path, ["balance", "Balance owing", "money"], l)}${input(path, ["rate", "Interest %", "pct"], l)}
+      ${input(path, ["repayment", "Repayment / month", "money"], l)}
+      ${l.kind === "offset" ? input(path, ["offsetCash", "Cash in offset accounts", "money"], l) : ""}${l.kind === "revolving" ? input(path, ["limit", "Revolving limit", "money"], l) : ""}
+      ${input(path, ["fixed", "Fixed rate (break fees on extra repayments)", "bool"], l, true)}</div></div>`; }).join("")}
+    <button class="ghost" type="button" data-addto="loans" data-blank="loan">Add home loan</button></fieldset>`;
+}
 function list(key, title, schema, items, blank, extra) {
   return `<fieldset><legend>${title}</legend>${items.map((it, i) => `<div class="item"><div class="item-head"><strong>${esc(it.name || "Untitled")}</strong><button class="link" type="button" data-del="${key}.${i}">Remove</button></div>
     <div class="fields">${schema.map(f => input(`${key}.${i}`, f, it)).join("")}</div>${extra ? extra(i, it) : ""}</div>`).join("")}
-    <button class="ghost" type="button" data-addto="${key}" data-blank="${blank}">Add ${title.toLowerCase().replace(/s$/, "")}</button></fieldset>`;
+    <button class="ghost" type="button" data-addto="${key}" data-blank="${blank}">Add ${title === "People" ? "person" : title.toLowerCase().replace(/s$/, "")}</button></fieldset>`;
 }
 function renderDetails() {
   const S = state;
@@ -855,11 +911,7 @@ function renderDetails() {
       ${input("", ["dependants", "Dependants", "num"], S)}
       <div style="display:grid;gap:8px">${input("", ["wills", "Wills up to date", "bool"], S)}${input("", ["incomeCover", "Income protection", "bool"], S)}</div></div></fieldset>
     ${list("people", "People", F.person, S.people, "person", schemeItem)}
-    <fieldset><legend>Mortgage</legend><div class="fields">
-      ${input("mortgage", ["balance", "Balance owing", "money"], S.mortgage)}${input("mortgage", ["rate", "Interest %", "pct"], S.mortgage)}
-      ${input("mortgage", ["repayment", "Repayment / month", "money"], S.mortgage)}
-      ${input("mortgage", ["kind", "Loan type", "select", [["table", "Table loan"], ["revolving", "Revolving credit"], ["offset", "Offset"]]], S.mortgage)}
-      ${S.mortgage.kind === "revolving" ? input("mortgage", ["limit", "Revolving limit", "money"], S.mortgage) : ""}</div></fieldset>
+${loansFieldset(S)}
     ${list("cash", "Cash accounts", F.cash, S.cash, "cash")}
     ${list("holdings", "Investments", F.holdings, S.holdings, "holdings")}
     ${list("debts", "Other debts", F.debts, S.debts, "debts")}

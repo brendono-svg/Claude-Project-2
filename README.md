@@ -8,8 +8,9 @@ action plan, written as a Markdown report. It covers:
 - **Balance sheet:** net worth, and how much of it is tied up in the house
 - **Savings habits** from your budgeting app or bank CSV exports: savings rate, top
   spending categories, and surplus with no job
-- **Mortgage endgame:** pay off vs invest after tax, offset/revolving options, and
-  redirecting the repayment into investments once it's gone
+- **Home loans:** several loans, including offset loans (interest only on the part not covered by
+  offset cash). It picks the loan where extra repayments save the most, shows how fast spare cash
+  clears it, and redirects each repayment into investments once that loan is gone
 - **KiwiSaver:** the government contribution (25c per $1 up to $260.72, nil over $180k),
   the 3.5% rates from 1 Apr 2026, fund type vs timeframe, fees
 - **Tax:** PIR check (lowest of the last two years), FIF $50k threshold per person

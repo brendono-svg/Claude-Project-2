@@ -48,12 +48,16 @@ holdings:
   - {name: NZ shares (direct), owner: Alex, type: nz_listed, value: 9000, cost: 7500, fund_type: aggressive, fee_pct: 0.0, single_company: false}
   - {name: US shares (direct), owner: Alex, type: direct_offshore, value: 44000, cost: 41500, fund_type: aggressive, fee_pct: 0.0, single_company: false}
 
-mortgage:
-  balance: 68000
-  rate: 0.0495
-  monthly_repayment: 3200
-  kind: table                       # table | revolving | offset
-  fixed_until: "2027-03"
+# Home loans, one entry each. kind: table | offset | revolving.
+# For an offset loan, put the cash in its offset accounts in offset_cash (not under cash above).
+loans:
+  - name: Mortgage
+    balance: 68000
+    rate: 0.0495
+    monthly_repayment: 3200
+    kind: table
+    fixed: true                     # fixed rate: extra repayments may trigger break fees
+  # - {name: Offset loan, balance: 200000, rate: 0.059, monthly_repayment: 1300, kind: offset, offset_cash: 200000}
 
 debts: []                           # e.g. {name: Credit card, balance: 2500, rate: 0.2095, monthly_payment: 300}
 

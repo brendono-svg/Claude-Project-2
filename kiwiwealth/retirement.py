@@ -9,7 +9,8 @@ Model, per month until the youngest person reaches `plan_age`:
   * A workplace scheme moves to the accessible pot when its owner stops work.
     KiwiSaver moves there when its owner reaches NZ Super age.
   * Until the first person retires, regular investing continues, plus the old
-    mortgage repayment once the mortgage is paid off.
+    repayment on each home loan once that loan is paid off. Offset cash is never
+    part of the invested pot: it stays as cash.
   * From the first retirement, the household draws `target` a year from the accessible
     pot, less the take-home pay of anyone still working and less NZ Super for each
     person over the qualifying age. Any mortgage repayments still owing are added.
@@ -47,7 +48,7 @@ class SimResult:
 
 
 def simulate(people: list[SimPerson], invested: float, monthly_invest: float,
-             mortgage_months: int | None, mortgage_repayment: float, target: float,
+             mortgages: list[tuple[int | None, float]], target: float,
              r_grow: float, r_draw: float, super_age: int, super_per_person: float,
              plan_age: int = 95, lock: bool = True, extra_monthly: float = 0.0) -> SimResult:
     total_months = max(plan_age - min(p.age for p in people), 0) * 12
@@ -97,14 +98,15 @@ def simulate(people: list[SimPerson], invested: float, monthly_invest: float,
                     paying = working[i]
                 if locked:
                     bal[i][j] = bal[i][j] * (1 + s.rate / 12) + (s.contribution / 12 if paying else 0.0)
-        mortgage_open = mortgage_months is None or t < mortgage_months
+        # Each loan is (months until repaid or None if never, monthly repayment).
+        owing = sum(pay for months, pay in mortgages if months is None or t < months)
+        freed = sum(pay for months, pay in mortgages if months is not None and t >= months)
         if t < draw_start:
             acc = acc * (1 + r_grow / 12) + monthly_invest + extra_monthly
-            if not mortgage_open:
-                acc += mortgage_repayment
+            acc += freed
         else:
             acc *= 1 + r_draw / 12
-            need = target / 12 + (mortgage_repayment if mortgage_open else 0.0)
+            need = target / 12 + owing
             need -= sum(p.net_pay / 12 for p, w in zip(people, working) if w)
             need -= sum(super_per_person / 12 for o in over if o)
             if need > 0:
