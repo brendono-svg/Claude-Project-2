@@ -685,8 +685,8 @@ function renderSyncPanel() {
     return;
   }
   const why = !sync.available
-    ? "This view of the page can't reach shared storage, so changes stay on this phone only. Open the link in your phone's web browser while signed in to claude.ai, or update the Claude app, then reload."
-    : !sync.canWrite ? "You can see the shared numbers but your access is view-only. The owner needs to share the page with you as Editor (or Contributor)."
+    ? "This view of the page can't reach shared storage, so you see only what's saved on this phone. Make sure you're signed in to claude.ai, and try opening the link in your phone's web browser (Safari or Chrome) instead of the app, then reload."
+    : !sync.canWrite ? (sync.remoteSeen ? "You can see the shared numbers but can't change them." : "You're signed in, but your access to this page doesn't include the household's numbers, so you're seeing the example.") + " Ask the owner to invite you by email as Editor from the page's Share menu, and to turn off link sharing if it's on. Then reload."
     : sync.lastError ? "The last upload didn't go through. Your changes are kept on this phone and will be sent when sync works." : "Sync is working.";
   box.innerHTML = `<p>${why}</p><dl class="kv small">
     <dt>Shared storage</dt><dd>${sync.available ? "available" : "not available"}</dd>
@@ -719,12 +719,12 @@ async function startSync() {
     if (!snap.exists) {
       if (snap.metadata.fromCache) return;
       // Nothing shared yet: upload what this phone has, unless it's only the example.
-      if (!state.example && sync.canWrite) flush(); else setSync(sync.canWrite ? "synced" : "readonly", sync.canWrite ? "Ready to sync. Enter your numbers in Details" : SYNC_TEXT.readonly);
+      if (!state.example && sync.canWrite) flush(); else setSync(sync.canWrite ? "synced" : "readonly", sync.canWrite ? "Ready to sync. Enter your numbers in Details" : "No access to the shared numbers: tap for details");
       return;
     }
     const d = snap.data();
     if (!d.profile?.people) return;
-    sync.remoteUpdated = d.updatedAt || "";
+    sync.remoteUpdated = d.updatedAt || ""; sync.remoteSeen = true;
     const same = canon({ profile: d.profile, csv: d.csv ?? null }) === canon(payload());
     const ours = d.updatedAt && (d.updatedAt === baseAt || d.updatedAt === sentAt);   // the shared copy is one this phone wrote or already matched
     if (same) { if (!writing && !snap.metadata.hasPendingWrites) { setDirty(false); setBase(d.updatedAt || null); } }
