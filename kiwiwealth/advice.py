@@ -462,26 +462,47 @@ def rule_concentration(a: Analysis) -> None:
            "annual_income": round(fv * swr)})
 
 
+def loan_principal(profile: Profile) -> float:
+    """Monthly amount of home loan repayments that reduces what's owed (not interest)."""
+    total = 0.0
+    for l in profile.loans:
+        if l.balance > 0:
+            interest = max(l.balance - (l.offset_cash if l.kind == "offset" else 0), 0) * l.rate / 12
+            total += min(max(l.monthly_repayment - interest, 0), l.balance)
+    return total
+
+
 def rule_savings_rate(a: Analysis) -> None:
     if a.monthly_income is None or a.monthly_spending is None or a.monthly_income <= 0:
         return
-    rate = a.monthly_surplus / a.monthly_income
+    # Loan principal repaid is saving too (spending includes the full repayments).
+    principal = loan_principal(a.profile)
+    if a.budget is not None:
+        # Imported transactions: only add back repayments that were actually counted as spending
+        # (a repayment the bank calls a "transfer" is left out of spending by the import).
+        principal = min(principal, a.budget.categories.get("Mortgage", 0.0))
+    rate = (a.monthly_surplus + principal) / a.monthly_income
     cats = a.budget.categories if a.budget else a.profile.budget.categories
     top = ", ".join(f"{k} {m(v)}" for k, v in list(cats.items())[:3]) if cats else ""
-    nums = {"savings_rate": round(rate, 3), "monthly_surplus": round(a.monthly_surplus)}
-    if rate < 0:
+    if principal >= 1:
+        top_note = f" This counts the {m(principal)}/month of home loan principal you're repaying as saving."
+    else:
+        top_note = ""
+    nums = {"savings_rate": round(rate, 3), "monthly_surplus": round(a.monthly_surplus),
+            "loan_principal": round(principal)}
+    if a.monthly_surplus < 0:
         a.add(1, "Cashflow", "You're spending more than you earn",
-              f"On average you're {m(-a.monthly_surplus)}/month behind." +
+              f"On average you're {m(-a.monthly_surplus)}/month behind." + top_note +
               (f" Biggest categories: {top}." if top else ""),
               "Pick two categories to cut and set spending limits in your budgeting app.", nums)
     elif rate < 0.10:
         a.add(2, "Cashflow", f"Savings rate is {pct(rate, 0)}; aim for 15-20%+",
-              "Your surplus is what pays for every goal and investment." +
+              "Your surplus is what pays for every goal and investment." + top_note +
               (f" Biggest categories: {top}." if top else ""),
               "Automate savings on payday so you save first and spend what's left.", nums)
     else:
         a.add(4, "Cashflow", f"Savings rate is {pct(rate, 0)}: good habit",
-              "A savings rate this high puts long-term goals within reach." +
+              "A savings rate this high puts long-term goals within reach." + top_note +
               (f" Biggest categories: {top}." if top else ""),
               "Make sure the surplus is actually invested on autopay and not left building up in the everyday account.", nums)
 
@@ -717,8 +738,8 @@ def rule_retirement(a: Analysis) -> None:
     if ok(base):
         a.add(3, "Retirement", "Retirement target looks achievable on current settings",
               f"Projected savings of {m(total)} (today's dollars) when {first.name} stops work in {years} years, "
-              f"plus NZ Super from 65, cover {m(target)}/yr until age {plan_age}. They could support "
-              f"about {m(sustainable)}/yr.",
+              f"plus NZ Super of {m(inputs['super_per_person'])}/yr each from 65, cover {m(target)}/yr until "
+              f"age {plan_age}. Together they could support about {m(sustainable)}/yr.",
               "Stick with the plan and check every year. Extra savings give you the option "
               "of retiring earlier or spending more.", a.retirement)
     elif locked_problem:
@@ -729,7 +750,8 @@ def rule_retirement(a: Analysis) -> None:
               + "keep KiwiSaver at the minimum rate, or retire later.", a.retirement)
     else:
         a.add(2, "Retirement", f"On track for about {m(sustainable)}/yr vs a {m(target)} target",
-              f"Projected savings of {m(total)} (today's dollars) when {first.name} stops work, plus NZ Super, "
+              f"Projected savings of {m(total)} (today's dollars) when {first.name} stops work, plus NZ Super "
+              f"of {m(inputs['super_per_person'])}/yr each from 65, "
               f"would run out around {when(base.first_short)} if you spend {m(target)}/yr.",
               (f"Invest about {m(extra)}/month more until then, " if extra else "Save more, ")
               + "or adjust the target or retirement age.", a.retirement)

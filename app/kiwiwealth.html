@@ -446,11 +446,16 @@ function analyse(P, budget, on = new Date()) {
   }
 
   // Savings rate
+  let savingsRate = null;
   if (income > 0 && surplus != null) {
-    const rate = surplus / income;
+    // Loan principal repaid is saving too (spending includes the full repayments).
+    // With imported transactions, only add back repayments that were counted as spending (a repayment the bank calls a "transfer" is left out by the import).
+    const principalAll = sum(loans, l => Math.min(Math.max((+l.repayment || 0) - Math.max(+l.balance - offOf(l), 0) * (+l.rate || 0) / 12, 0), +l.balance));
+    const principal = budget ? Math.min(principalAll, +cats["Mortgage"] || 0) : principalAll;
+    const rate = (surplus + principal) / income; savingsRate = rate;
     const top = Object.entries(cats).slice(0, 3).map(([c, v]) => `${c} ${$(v)}`).join(", ");
-    const tail = top ? ` Biggest categories: ${top}.` : "";
-    if (rate < 0) add(1, "Cashflow", "You're spending more than you earn", `On average you're ${$(-surplus)}/month behind.${tail}`, "Pick two categories to cut and set spending limits in your budgeting app.");
+    const tail = (principal >= 1 ? ` This counts the ${$(principal)}/month of home loan principal you're repaying as saving.` : "") + (top ? ` Biggest categories: ${top}.` : "");
+    if (surplus < 0) add(1, "Cashflow", "You're spending more than you earn", `On average you're ${$(-surplus)}/month behind.${tail}`, "Pick two categories to cut and set spending limits in your budgeting app.");
     else if (rate < .1) add(2, "Cashflow", `Savings rate is ${pc(rate, 0)}; aim for 15-20%+`, `Your surplus is what pays for every goal and investment.${tail}`, "Automate savings on payday so you save first and spend what's left.");
     else add(4, "Cashflow", `Savings rate is ${pc(rate, 0)}: good habit`, `A savings rate this high puts long-term goals within reach.${tail}`, "Make sure the surplus is actually invested on autopay and not left building up in the everyday account.");
   }
@@ -539,18 +544,18 @@ function analyse(P, budget, on = new Date()) {
   if (!ok(base) && base.drawStart > 0 && ok(run({ extraMonthly: 50000 }))) extra = 50000 - bisect(x => ok(run({ extraMonthly: 50000 - x })), 0, 50000);
   const lockedProblem = !ok(base) && ok(run({ lock: false }));
   const series = base.series.map(x => ({ year: on.getFullYear() + x.yearIndex, ks: x.ks, wp: x.wp, inv: x.acc }));
-  if (ok(base)) add(3, "Retirement", "Retirement target looks achievable on current settings", `Projected savings of ${$(projected)} (today's dollars) when ${first.name} stops work in ${yearsTo} years, plus NZ Super from 65, cover ${$(target)}/yr until age ${ASSUME.planAge}. They could support about ${$(sustainable)}/yr.`, "Stick with the plan and check every year. Extra savings give you the option of retiring earlier or spending more.");
+  if (ok(base)) add(3, "Retirement", "Retirement target looks achievable on current settings", `Projected savings of ${$(projected)} (today's dollars) when ${first.name} stops work in ${yearsTo} years, plus NZ Super of ${$(simIn.superPerPerson)}/yr each from 65, cover ${$(target)}/yr until age ${ASSUME.planAge}. Together they could support about ${$(sustainable)}/yr.`, "Stick with the plan and check every year. Extra savings give you the option of retiring earlier or spending more.");
   else if (lockedProblem) add(2, "Retirement", "The money you can reach runs out before KiwiSaver opens", `Your total savings are enough for ${$(target)}/yr, but too much is locked in KiwiSaver. On current settings the money outside KiwiSaver runs out around ${when(base.firstShort)}.`, (extra ? `Put about ${$(extra)}/month more into investments outside KiwiSaver, ` : "Build more savings outside KiwiSaver, ") + "keep KiwiSaver at the minimum rate, or retire later.");
-  else add(2, "Retirement", `On track for about ${$(sustainable)}/yr vs a ${$(target)} target`, `Projected savings of ${$(projected)} (today's dollars) when ${first.name} stops work, plus NZ Super, would run out around ${when(base.firstShort)} if you spend ${$(target)}/yr.`, (extra ? `Invest about ${$(extra)}/month more until then, ` : "Save more, ") + "or adjust the target or retirement age.");
+  else add(2, "Retirement", `On track for about ${$(sustainable)}/yr vs a ${$(target)} target`, `Projected savings of ${$(projected)} (today's dollars) when ${first.name} stops work, plus NZ Super of ${$(simIn.superPerPerson)}/yr each from 65, would run out around ${when(base.firstShort)} if you spend ${$(target)}/yr.`, (extra ? `Invest about ${$(extra)}/month more until then, ` : "Save more, ") + "or adjust the target or retirement age.");
 
   // Protection
   if (!P.wills) add(2, "Protection", "Make or update your wills and enduring powers of attorney", "Without these, your family and assets may not be looked after the way you want.", "See a lawyer or Public Trust. Review after big life changes.");
   if (+P.dependants > 0 && !P.incomeCover) add(2, "Protection", "Check life and income-protection cover", "Your plan relies on your incomes. ACC only covers accidents, not illness.", "Get quotes or speak to an insurance adviser. Cover should fall as debt falls and wealth grows.");
 
   recs.sort((a, b) => a.priority - b.priority);
-  return { recs, goals, pirs, marg, income, spending, surplus, cats, months: !loans.length ? 0 : !pri ? null : months, priLoan: pri ? pri.name : null, loanCount: loans.length,
+  return { recs, goals, pirs, marg, income, spending, surplus, savingsRate, cats, months: !loans.length ? 0 : !pri ? null : months, priLoan: pri ? pri.name : null, loanCount: loans.length,
     sheet: { home: +P.home || 0, ks, wp, inv, cash, other: +P.other || 0, debt, assets, net: assets - debt }, flowsBy,
-    ret: { horizon: yearsTo, first: first.name, ksAt: at.ks, wpAt: at.wp, invAt: at.acc, projected, superAmt: simIn.superPerPerson * people.length, sustainable, target, extra, lockedProblem, shortYear: base.firstShort == null ? null : on.getFullYear() + Math.floor(base.firstShort / 12), real: rInvReal, rDraw, series } };
+    ret: { superEach: simIn.superPerPerson, nPeople: people.length, horizon: yearsTo, first: first.name, ksAt: at.ks, wpAt: at.wp, invAt: at.acc, projected, superAmt: simIn.superPerPerson * people.length, sustainable, target, extra, lockedProblem, shortYear: base.firstShort == null ? null : on.getFullYear() + Math.floor(base.firstShort / 12), real: rInvReal, rDraw, series } };
 }
 
 /* ===== CSV import. Mirrors kiwiwealth/budget_import.py ===== */
@@ -738,7 +743,7 @@ function renderPlan(A) {
   const s = A.sheet, total = Math.max(s.assets, 1);
   const parts = [["House", s.home, "var(--kowhai)"], ["KiwiSaver", s.ks, "var(--hero-ks)"], ["Workplace super", s.wp, "var(--hero-wp)"], ["Investments", s.inv, "var(--hero-inv)"], ["Cash & other", s.cash + s.other, "var(--hero-cash)"]];
   const groups = {}; A.recs.forEach(r => (groups[r.priority] ||= []).push(r));
-  const rate = A.income > 0 && A.surplus != null ? A.surplus / A.income : null;
+  const rate = A.savingsRate;
   el("view-plan").innerHTML = `
     <section class="worth" aria-label="Net worth">
       <div><span class="eyebrow">Net worth</span><div class="big">${$(s.net)}</div>
@@ -749,7 +754,7 @@ function renderPlan(A) {
     <section class="stats">
       <div class="stat"><span class="v">${A.loanCount === 0 ? "Free" : A.months == null ? "—" : A.months + " mo"}</span><span class="k">${A.loanCount > 1 && A.priLoan ? esc(A.priLoan) + " paid off in" : A.loanCount > 0 && !A.priLoan ? "Lending fully offset" : "Mortgage-free in"}</span></div>
       <div class="stat"><span class="v">${rate == null ? "—" : pc(rate, 0)}</span><span class="k">Savings rate${csvBudget ? " (from CSV)" : ""}</span></div>
-      <div class="stat"><span class="v">${$(A.ret.sustainable)}</span><span class="k">Retirement income/yr your savings support</span></div>
+      <div class="stat"><span class="v">${$(A.ret.sustainable)}</span><span class="k">Retirement income/yr, incl. NZ Super</span></div>
     </section>
     <section class="group" aria-label="Action plan"><h2>Action plan</h2>
     ${[1, 2, 3, 4].filter(p => groups[p]).map(p => `
@@ -791,6 +796,7 @@ function renderFuture(A) {
   const r = A.ret;
   el("view-future").innerHTML = `
     <section class="card"><div><span class="eyebrow">Retirement projection · today's dollars</span><h2>${$(r.sustainable)}/yr to age ${ASSUME.planAge}</h2>
+      <p class="small">This includes NZ Super of <strong>${$(r.superEach)}/yr${r.nPeople > 1 ? " each" : ""}</strong> from age 65${r.nPeople > 1 ? ` (${$(r.superAmt)}/yr once you're both 65)` : ""}. The rest comes from your savings${r.nPeople > 1 ? ", and from the pay of whoever is still working" : ""}.</p>
       <p class="small muted">${r.sustainable >= r.target ? `That's above your ${$(r.target)}/yr target.` : `Your target is ${$(r.target)}/yr${r.shortYear ? `; at that rate the money you can reach runs out around ${r.shortYear}` : ""}.`}</p></div>
       ${r.series.length > 1 ? chart(r.series, new Date().getFullYear() + r.horizon) : ""}
       <div class="legend"><span><i style="background:var(--pounamu)"></i>KiwiSaver (locked to 65)</span><span><i style="background:var(--wp)"></i>Workplace super</span><span><i style="background:var(--kowhai)"></i>Money you can use</span></div>
@@ -799,7 +805,7 @@ function renderFuture(A) {
         <dt>KiwiSaver then</dt><dd>${$(r.ksAt)}</dd>
         <dt>Workplace super then</dt><dd>${$(r.wpAt)}</dd>
         <dt>Investments then</dt><dd>${$(r.invAt)}</dd>
-        <dt>NZ Super once all are 65</dt><dd>${$(r.superAmt)}/yr</dd>
+        <dt>NZ Super, included above${r.nPeople > 1 ? " (both)" : ""}</dt><dd>${$(r.superAmt)}/yr</dd>
         <dt>Your target</dt><dd>${$(r.target)}/yr</dd>
         ${r.extra ? `<dt>Extra investing needed</dt><dd>${$(r.extra)}/mo</dd>` : ""}
       </dl>

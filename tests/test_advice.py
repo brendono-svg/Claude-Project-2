@@ -240,3 +240,30 @@ def test_loans_take_precedence_over_legacy_mortgage():
     assert profile_from_app_state(state).loans == []    # an empty loans list means no loans
     del state["loans"]
     assert profile_from_app_state(state).loans[0].balance == 50_000
+
+
+def test_savings_rate_counts_loan_principal():
+    # Spending includes an aggressive mortgage repayment, leaving little cash surplus.
+    p = base(mortgage={"balance": 92_000, "rate": 0.0495, "monthly_repayment": 8_667},
+             budget={"monthly_net_income": 19_739, "monthly_spending": 18_852})
+    a = analyse(p, on=ON)
+    rec = next(r for r in a.recommendations if r.title.startswith("Savings rate"))
+    assert rec.numbers["loan_principal"] == round(8_667 - 92_000 * 0.0495 / 12)
+    assert rec.numbers["savings_rate"] > 0.4 and "good habit" in rec.title
+    assert "home loan principal" in rec.why
+
+
+def test_retirement_advice_names_nz_super():
+    why = next(r for r in analyse(base(), on=ON).recommendations if r.category == "Retirement").why
+    assert "NZ Super of $28,868/yr each from 65" in why
+
+
+def test_savings_rate_with_imported_budget_only_adds_back_counted_repayments():
+    from kiwiwealth.budget_import import BudgetSummary
+    p = base(mortgage={"balance": 92_000, "rate": 0.0495, "monthly_repayment": 8_667})
+    rate = lambda cats: next(r for r in analyse(p, BudgetSummary(6, 20_000, 12_000, cats), on=ON).recommendations  # noqa: E731
+                             if r.title.startswith("Savings rate")).numbers["savings_rate"]
+    # Repayment left out of spending by the import ("Transfer to loan"): nothing to add back.
+    assert rate({"Groceries": 1_500}) == pytest.approx(0.4)
+    # Repayment counted under Mortgage: its principal is added back.
+    assert rate({"Mortgage": 8_667, "Groceries": 1_500}) > 0.8

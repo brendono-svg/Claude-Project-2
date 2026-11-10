@@ -78,8 +78,8 @@ def render(a: Analysis) -> str:
                 f"  - KiwiSaver (locked until 65): {m(r['kiwisaver_projected'])}",
                 f"  - Workplace schemes: {m(r['workplace_projected'])}",
                 f"  - Investments (incl. redirected mortgage payment): {m(r['investments_projected'])}",
-                f"- NZ Super once everyone is 65: {m(r['nz_super_annual'])}/yr",
-                f"- Income your savings can support to age {r['plan_to_age']}: about "
+                f"- NZ Super (included below): {m(r['nz_super_annual'])}/yr once everyone is 65",
+                f"- Income your savings and NZ Super can support to age {r['plan_to_age']}: about "
                 f"{m(r['sustainable_income'])}/yr vs target {m(r['income_target'])}/yr",
                 f"- Assumes {pct(r['real_return_used'])} real return after fees and tax while saving, "
                 f"{pct(r['drawdown_return_used'])} once drawing down, {pct(r['inflation'])} inflation. A partner "
