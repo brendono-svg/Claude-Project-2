@@ -1,7 +1,10 @@
 # NZ fund comparison app: plan and brainstorm
 
-Status: draft for discussion. Nothing here is locked in or built. Facts marked
-**(verify)** were not confirmed against a primary source and belong in the Phase 0 spike.
+Status: plan agreed in outline, nothing built. Facts marked **(verify)** were not
+confirmed against a primary source and belong in the Phase 0 spike.
+
+Decided: personal use only; KiwiSaver first; lives in this repo as `fundcompare/`
+beside `kiwiwealth/`.
 
 ## 1. Goal
 
@@ -103,7 +106,11 @@ that need a human decision.
 New Python package `fundcompare/` beside `kiwiwealth/`, same conventions (pytest, dated
 sources, source link on every figure).
 
-- **Raw layer:** API responses and PDFs stored unchanged, with fetch date and hash.
+- **Raw layer:** API responses and PDFs stored unchanged, with fetch date and hash,
+  in a git-ignored data folder. The API key is read from an environment variable only.
+- **Fixtures:** recorded raw responses for 2-3 KiwiSaver schemes, key stripped, are
+  committed under `tests/fundcompare/`. Build and test models work offline against
+  these and do not call the live API.
 - **Normalised layer:** SQLite. Tables: `provider`, `scheme`, `fund`, `fund_update`
   (one row per fund per quarter), `asset_mix`, `holding`, `fee`, `document`,
   `manager`, `fund_manager_link`, `extraction` (LLM output with quote and page
@@ -114,7 +121,8 @@ sources, source link on every figure).
   app pattern); interactive filters later.
 - **Refresh:** quarterly job roughly a month after each quarter end, once fund updates
   are filed **(verify the filing deadline)**.
-- **Later:** feed fund fees and category into the kiwiwealth KiwiSaver and investment rules.
+- **Later:** kiwiwealth reads a dated data file exported by fundcompare (fees, category).
+  Neither package imports the other, so the kiwiwealth parity checks are unaffected.
 
 ## 6. Who does what
 
@@ -133,15 +141,26 @@ to derived tables; every extracted claim carries a quote and a document referenc
 
 ## 7. Phases
 
-0. **Spike.** Get an API key, pull one KiwiSaver scheme end to end, confirm fields,
-   history depth and rate limits. Resolve every **(verify)** in this document.
+0. **Spike.** Get an API key and pull one KiwiSaver scheme end to end. Exit criteria,
+   written back into this document:
+   - endpoints used, and a field map against the list in section 3;
+   - history depth, rate limits and sign-up terms;
+   - every **(verify)** resolved;
+   - one fund's values checked by hand against its published fund update PDF;
+   - fixtures for 2-3 schemes committed;
+   - a decision: **structured** (API returns fund update fields), **PDF fallback**
+     (API returns documents only, so Phases 1-3 parse the regulated fund update
+     template instead), or **stop**.
 1. **MVP.** Ingest all KiwiSaver funds for the latest quarter, categorise, top five by
-   1-year and 5-year return per category.
-2. **Fees and credibility.** Dollar fees, FUM, age, investors, eligibility gates, scorecard.
+   1-year and 5-year return per category, with the track-record, minimum FUM and
+   open-to-new-investors gates applied. Done when `python -m pytest -q tests/fundcompare`
+   passes with the network off.
+2. **Fees and credibility.** Dollar fees, fund age, investor numbers, scorecard.
 3. **All MIS funds and history.** Extend beyond KiwiSaver, backfill past quarters,
    keep closed funds.
 4. **Approach and managers.** SIPO extraction, passive/active classification, manager table.
-5. **External ratings.** Only after the terms-of-use decision.
+5. **External ratings.** Entered by hand with a source link and date (personal use,
+   no automated capture).
 6. **UI and scheduled refresh.**
 7. **kiwiwealth integration.**
 
@@ -157,9 +176,5 @@ to derived tables; every extracted claim carries a quote and a document referenc
 
 ## 9. Open questions
 
-1. Personal use only, or something to publish? This drives the legal and licensing answers.
-2. KiwiSaver first, then other MIS funds, or both at once?
-3. Output: report, phone page like kiwiwealth, or web app?
-4. Same repo as kiwiwealth, or a new one?
-5. Which tax basis should be the headline return?
-6. Is manual entry of external ratings acceptable if automated capture is not permitted?
+1. Output: report, phone page like kiwiwealth, or web app?
+2. Which tax basis should be the headline return?
