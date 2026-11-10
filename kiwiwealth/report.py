@@ -1,0 +1,91 @@
+"""Markdown report."""
+from __future__ import annotations
+
+from .advice import PRIORITY_LABELS, Analysis, m, pct, scheme_flows
+from .nz_rules import RULES
+
+DISCLAIMER = (
+    "> **General information, not financial advice.** This is a planning tool built for our own "
+    "household. It uses simplified NZ tax rules and assumed returns, and investment returns are "
+    "not guaranteed. Check big decisions with a licensed financial adviser (FAP), and check tax with IRD "
+    "or an accountant."
+)
+
+
+def render(a: Analysis) -> str:
+    p = a.profile
+    out = [f"# Financial plan - {p.household}", f"_Prepared {a.on:%d %B %Y}_", "", DISCLAIMER, ""]
+
+    out += ["## Where we are now", "", "| | |", "|---|---|",
+            f"| Home | {m(p.home_value)} |",
+            f"| KiwiSaver (locked to 65) | {m(p.total_kiwisaver)} |",
+            *([f"| Workplace savings (paid out on leaving) | {m(p.total_workplace)} |"] if p.total_workplace else []),
+            f"| Investments | {m(p.total_investments)} |",
+            f"| Cash | {m(p.total_cash)} |"]
+    if p.other_property or p.vehicles_and_other:
+        out.append(f"| Other assets | {m(p.other_property + p.vehicles_and_other)} |")
+    out += [f"| Mortgage & debts | -{m(p.total_debt)} |",
+            f"| **Net worth** | **{m(p.net_worth)}** |",
+            f"| Wealth you can use any time | {m(p.liquid_wealth)} |", ""]
+
+    if a.monthly_income is not None:
+        src = (f"from {a.budget.transactions} transactions over {a.budget.months} months"
+               if a.budget else p.budget.source)
+        out += [f"**Cashflow** ({src}): income {m(a.monthly_income)}/month"]
+        if a.monthly_spending is not None:
+            rate = a.monthly_surplus / a.monthly_income if a.monthly_income else 0
+            out[-1] += (f", spending {m(a.monthly_spending)}/month, surplus "
+                        f"{m(a.monthly_surplus)}/month (savings rate {pct(rate, 0)}).")
+        cats = a.budget.categories if a.budget else p.budget.categories
+        if cats:
+            out += ["", "| Top spending categories | per month |", "|---|---|"]
+            out += [f"| {k} | {m(v)} |" for k, v in list(cats.items())[:8]]
+        out.append("")
+
+    out += ["**Tax settings:** " + "; ".join(
+        f"{x.name} - marginal {pct(a.marginal_rates[x.name])}, PIR {pct(a.pirs[x.name])}"
+        for x in p.people), ""]
+
+    out += ["## Action plan", ""]
+    current = None
+    n = 0
+    for r in a.recommendations:
+        if r.priority != current:
+            current = r.priority
+            out += [f"### {PRIORITY_LABELS[r.priority]}", ""]
+        n += 1
+        out += [f"**{n}. {r.title}** _({r.category})_  ", f"{r.why}  ", f"→ {r.action}", ""]
+
+    if a.goals:
+        out += ["## Goals", "", "| Goal | Target | Year | Saved | Suggested home | Needed/month |",
+                "|---|---|---|---|---|---|"]
+        out += [f"| {g['name']} | {m(g['target'])} | {g['year']} | {m(g['saved'])} | "
+                f"{g['suggested_fund']} | {m(g['monthly_needed'])} |" for g in a.goals]
+        out.append("")
+
+    flows = [(x, f) for x in p.people for f in scheme_flows(x, a.on)]
+    if flows:
+        out += ["## Retirement schemes", "", "| Scheme | Access | Balance | You/yr | Employer/yr (after tax) | Govt/yr |",
+                "|---|---|---|---|---|---|"]
+        out += [f"| {x.name}: {f.scheme.name} | {'At 65' if f.scheme.kind == 'kiwisaver' else 'On leaving job'} | "
+                f"{m(f.scheme.balance)} | {m(f.member)} | {m(f.employer_net)} | {m(f.govt)} |" for x, f in flows]
+        out.append("")
+
+    if a.retirement:
+        r = a.retirement
+        out += ["## Retirement projection (today's dollars)", "",
+                f"- {r['first_to_retire']} stops work in {r['years_to_retirement']} years. Savings then:",
+                f"  - KiwiSaver (locked until 65): {m(r['kiwisaver_projected'])}",
+                f"  - Workplace schemes: {m(r['workplace_projected'])}",
+                f"  - Investments (incl. redirected mortgage payment): {m(r['investments_projected'])}",
+                f"- NZ Super once everyone is 65: {m(r['nz_super_annual'])}/yr",
+                f"- Income your savings can support to age {r['plan_to_age']}: about "
+                f"{m(r['sustainable_income'])}/yr vs target {m(r['income_target'])}/yr",
+                f"- Assumes {pct(r['real_return_used'])} real return after fees and tax while saving, "
+                f"{pct(r['drawdown_return_used'])} once drawing down, {pct(r['inflation'])} inflation. A partner "
+                "still working covers spending from their pay; pay above the target isn't counted as saved.", ""]
+
+    out += ["## Sources for NZ rules", ""]
+    out += [f"- {name.replace('_', ' ')}: {rule.source}" for name, rule in RULES.items()]
+    out.append("")
+    return "\n".join(out)

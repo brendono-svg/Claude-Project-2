@@ -1,0 +1,1097 @@
+[
+ {
+  "name": "example household",
+  "on": "2026-11-08",
+  "state": {
+   "example": true,
+   "household": "The Example whānau",
+   "home": 1650000,
+   "other": 45000,
+   "dependants": 2,
+   "wills": true,
+   "incomeCover": false,
+   "people": [
+    {
+     "name": "Alex",
+     "age": 44,
+     "salary": 145000,
+     "other": 1200,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": 0.28,
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 95000,
+       "fund": "growth",
+       "fee": 0.006,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 0.06,
+        "unit": "pct"
+       },
+       "employer": {
+        "amount": 2400,
+        "unit": "six_months",
+        "afterTax": true
+       }
+      },
+      {
+       "name": "Workplace savings scheme",
+       "kind": "workplace",
+       "balance": 70000,
+       "fund": "growth",
+       "fee": 0.005,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 110,
+        "unit": "fortnight"
+       },
+       "employer": {
+        "amount": 0.07,
+        "unit": "pct",
+        "afterTax": false
+       }
+      }
+     ]
+    },
+    {
+     "name": "Sam",
+     "age": 42,
+     "salary": 62000,
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": 0.28,
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 82000,
+       "fund": "conservative",
+       "fee": 0.009,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 0.035,
+        "unit": "pct"
+       },
+       "employer": {
+        "amount": 0.035,
+        "unit": "pct",
+        "afterTax": false
+       }
+      }
+     ]
+    }
+   ],
+   "cash": [
+    {
+     "name": "Everyday + on-call savings",
+     "balance": 18000,
+     "rate": 0.025,
+     "emergency": true
+    },
+    {
+     "name": "Term deposit",
+     "balance": 20000,
+     "rate": 0.042,
+     "emergency": true
+    }
+   ],
+   "holdings": [
+    {
+     "name": "Global index fund",
+     "owner": "joint",
+     "type": "pie",
+     "value": 32000,
+     "cost": 26000,
+     "fee": 0.003,
+     "monthly": 400,
+     "single": false
+    },
+    {
+     "name": "NZ shares",
+     "owner": "Alex",
+     "type": "nz_listed",
+     "value": 9000,
+     "cost": 7500,
+     "fee": 0,
+     "monthly": 0,
+     "single": false
+    },
+    {
+     "name": "US shares",
+     "owner": "Alex",
+     "type": "direct_offshore",
+     "value": 44000,
+     "cost": 41500,
+     "fee": 0,
+     "monthly": 0,
+     "single": false
+    }
+   ],
+   "mortgage": {
+    "balance": 68000,
+    "rate": 0.0495,
+    "repayment": 3200,
+    "kind": "table",
+    "limit": 0
+   },
+   "debts": [],
+   "goals": [
+    {
+     "name": "Family trip to Europe",
+     "target": 25000,
+     "year": 2028,
+     "saved": 6000,
+     "priority": 2
+    },
+    {
+     "name": "Kids' university fund",
+     "target": 60000,
+     "year": 2036,
+     "saved": 5000,
+     "priority": 1
+    },
+    {
+     "name": "Car replacement",
+     "target": 30000,
+     "year": 2030,
+     "saved": 0,
+     "priority": 2
+    }
+   ],
+   "budget": {
+    "income": 12000,
+    "spending": 7400
+   },
+   "prefs": {
+    "risk": "growth",
+    "shares": true,
+    "retireAge": 62,
+    "target": 85000,
+    "maxShare": 0.1
+   }
+  },
+  "expected": {
+   "net_worth": 1997000,
+   "ks": 659085,
+   "wp": 354401,
+   "acc": 1073195,
+   "sustainable": 128192,
+   "extra": null,
+   "short_year": null,
+   "locked_problem": false,
+   "titles": [
+    "1 About $2,535/month of surplus has no job",
+    "1 Plan now where the mortgage payment goes once it's paid off",
+    "2 Alex: KiwiSaver contributions above 3.5% are locked until 65",
+    "2 Check life and income-protection cover",
+    "2 Direct shares are 62% of your investments vs a 15% plan",
+    "2 Finish the mortgage, then redirect the repayment",
+    "2 Sam: KiwiSaver fund may be too cautious",
+    "2 The house is 80% of your wealth",
+    "2 Your investment plan: core funds + a small share satellite",
+    "3 Alex: close to the $50,000 FIF threshold",
+    "3 Alex: plan for the Workplace savings scheme payout",
+    "3 Consider an offset or revolving portion",
+    "3 Fund each goal from its own account or fund",
+    "3 Retirement target looks achievable on current settings",
+    "3 Sam: KiwiSaver fee of 0.90% could cost about $18,778",
+    "4 Savings rate is 38%: good habit",
+    "4 Scenario: downsizing the large house one day"
+   ]
+  }
+ },
+ {
+  "name": "age gap, two schemes, retire 55/60",
+  "on": "2026-11-08",
+  "state": {
+   "example": false,
+   "household": "Case",
+   "home": 1500000,
+   "other": 0,
+   "dependants": 1,
+   "wills": false,
+   "incomeCover": false,
+   "cash": [
+    {
+     "name": "Savings",
+     "balance": 25000,
+     "rate": 0,
+     "emergency": true
+    }
+   ],
+   "holdings": [
+    {
+     "name": "Global fund",
+     "owner": "joint",
+     "type": "pie",
+     "value": 20000,
+     "cost": 18000,
+     "fee": 0.003,
+     "monthly": 500,
+     "single": false
+    },
+    {
+     "name": "US shares",
+     "owner": "Kahu",
+     "type": "direct_offshore",
+     "value": 60000,
+     "cost": 52000,
+     "fee": 0,
+     "monthly": 0,
+     "single": false
+    }
+   ],
+   "mortgage": {
+    "balance": 90000,
+    "rate": 0.0495,
+    "repayment": 6000,
+    "kind": "table",
+    "limit": 0
+   },
+   "debts": [],
+   "goals": [
+    {
+     "name": "Boat",
+     "target": 40000,
+     "year": 2030,
+     "saved": 5000,
+     "priority": 3
+    }
+   ],
+   "budget": {
+    "income": "",
+    "spending": 9000
+   },
+   "prefs": {
+    "risk": "growth",
+    "shares": true,
+    "retireAge": 62,
+    "target": 110000,
+    "maxShare": 0.1
+   },
+   "people": [
+    {
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": 0.28,
+     "retireAge": 55,
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 100000,
+       "fund": "growth",
+       "fee": 0.009,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 4000,
+        "unit": "six_months"
+       },
+       "employer": {
+        "amount": 2400,
+        "unit": "six_months",
+        "afterTax": true
+       }
+      },
+      {
+       "name": "Work scheme",
+       "kind": "workplace",
+       "balance": 90000,
+       "fund": "growth",
+       "fee": 0.004,
+       "pie": false,
+       "vested": 0.8,
+       "voluntary": 0,
+       "member": {
+        "amount": 120,
+        "unit": "fortnight"
+       },
+       "employer": {
+        "amount": 350,
+        "unit": "fortnight",
+        "afterTax": false
+       }
+      }
+     ],
+     "name": "Kahu",
+     "age": 42,
+     "salary": 200000
+    },
+    {
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": "",
+     "retireAge": 60,
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 40000,
+       "fund": "growth",
+       "fee": 0.005,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 0.035,
+        "unit": "pct"
+       },
+       "employer": {
+        "amount": 0.035,
+        "unit": "pct",
+        "afterTax": false
+       }
+      }
+     ],
+     "name": "Mere",
+     "age": 33,
+     "salary": 95000
+    }
+   ]
+  },
+  "expected": {
+   "net_worth": 1745000,
+   "ks": 493797,
+   "wp": 275702,
+   "acc": 1233766,
+   "sustainable": 126091,
+   "extra": null,
+   "short_year": null,
+   "locked_problem": false,
+   "titles": [
+    "1 About $6,336/month of surplus has no job",
+    "1 Plan now where the mortgage payment goes once it's paid off",
+    "2 Build the emergency fund",
+    "2 Check life and income-protection cover",
+    "2 Direct shares are 75% of your investments vs a 15% plan",
+    "2 Finish the mortgage, then redirect the repayment",
+    "2 Kahu: FIF rules apply to your overseas shares",
+    "2 Make or update your wills and enduring powers of attorney",
+    "2 The house is 82% of your wealth",
+    "2 Your investment plan: core funds + a small share satellite",
+    "3 Consider an offset or revolving portion",
+    "3 Fund each goal from its own account or fund",
+    "3 Hold taxable investments in Mere's name",
+    "3 Kahu: KiwiSaver fee of 0.90% could cost about $53,446",
+    "3 Kahu: plan for the Work scheme payout",
+    "3 Mere: confirm your PIR is 28.0%",
+    "3 Retirement target looks achievable on current settings",
+    "3 Your cash is earning very little",
+    "4 Kahu: no government contribution above $180,000",
+    "4 Savings rate is 45%: good habit",
+    "4 Scenario: downsizing the large house one day"
+   ]
+  }
+ },
+ {
+  "name": "single, no KiwiSaver, shortfall",
+  "on": "2026-11-08",
+  "state": {
+   "example": false,
+   "household": "Case",
+   "home": 0,
+   "other": 0,
+   "dependants": 0,
+   "wills": true,
+   "incomeCover": true,
+   "cash": [
+    {
+     "name": "Bank",
+     "balance": 3000,
+     "rate": 0.01,
+     "emergency": true
+    }
+   ],
+   "holdings": [],
+   "mortgage": {
+    "balance": 0,
+    "rate": 0,
+    "repayment": 0,
+    "kind": "table",
+    "limit": 0
+   },
+   "debts": [
+    {
+     "name": "credit card",
+     "balance": 4000,
+     "rate": 0.2
+    }
+   ],
+   "goals": [],
+   "budget": {
+    "income": 4000,
+    "spending": 3900
+   },
+   "prefs": {
+    "risk": "growth",
+    "shares": true,
+    "retireAge": 65,
+    "target": 50000,
+    "maxShare": 0.1
+   },
+   "people": [
+    {
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": "",
+     "retireAge": "",
+     "sl": false,
+     "schemes": [],
+     "name": "Tama",
+     "age": 50,
+     "salary": 60000
+    }
+   ]
+  },
+  "expected": {
+   "net_worth": -1000,
+   "ks": 0,
+   "wp": 0,
+   "acc": 0,
+   "sustainable": 28868,
+   "extra": 1987,
+   "short_year": 2041,
+   "locked_problem": false,
+   "titles": [
+    "1 Build the emergency fund",
+    "1 Clear the credit card (20.0%)",
+    "1 Tama: join KiwiSaver",
+    "2 On track for about $28,868/yr vs a $50,000 target",
+    "2 Savings rate is 3%; aim for 15-20%+",
+    "2 Your investment plan: core funds + a small share satellite",
+    "3 Keep paying yourself the old mortgage payment",
+    "3 Tama: confirm your PIR is 28.0%"
+   ]
+  }
+ },
+ {
+  "name": "early retirement, money locked in KiwiSaver",
+  "on": "2026-11-08",
+  "state": {
+   "example": false,
+   "household": "Case",
+   "home": 800000,
+   "other": 0,
+   "dependants": 0,
+   "wills": true,
+   "incomeCover": true,
+   "cash": [],
+   "holdings": [
+    {
+     "name": "Fund",
+     "owner": "Ana",
+     "type": "pie",
+     "value": 150000,
+     "cost": 100000,
+     "fee": 0.004,
+     "monthly": 1000,
+     "single": false
+    }
+   ],
+   "mortgage": {
+    "balance": 0,
+    "rate": 0,
+    "repayment": 0,
+    "kind": "table",
+    "limit": 0
+   },
+   "debts": [],
+   "goals": [],
+   "budget": {
+    "income": "",
+    "spending": 5000
+   },
+   "prefs": {
+    "risk": "growth",
+    "shares": true,
+    "retireAge": 65,
+    "target": 60000,
+    "maxShare": 0.1
+   },
+   "people": [
+    {
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": 0.28,
+     "retireAge": 55,
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 900000,
+       "fund": "growth",
+       "fee": 0.005,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 0.1,
+        "unit": "pct"
+       },
+       "employer": {
+        "amount": 0.035,
+        "unit": "pct",
+        "afterTax": false
+       }
+      }
+     ],
+     "name": "Ana",
+     "age": 50,
+     "salary": 120000
+    }
+   ]
+  },
+  "expected": {
+   "net_worth": 1850000,
+   "ks": 1131777,
+   "wp": 0,
+   "acc": 240880,
+   "sustainable": 26980,
+   "extra": 4538,
+   "short_year": 2035,
+   "locked_problem": true,
+   "titles": [
+    "1 About $369/month of surplus has no job",
+    "1 Build the emergency fund",
+    "2 Ana: KiwiSaver contributions above 3.5% are locked until 65",
+    "2 The money you can reach runs out before KiwiSaver opens",
+    "2 Your investment plan: core funds + a small share satellite",
+    "3 Keep paying yourself the old mortgage payment",
+    "4 Savings rate is 21%: good habit"
+   ]
+  }
+ },
+ {
+  "name": "already retired",
+  "on": "2026-11-08",
+  "state": {
+   "example": false,
+   "household": "Case",
+   "home": 600000,
+   "other": 0,
+   "dependants": 0,
+   "wills": true,
+   "incomeCover": true,
+   "cash": [
+    {
+     "name": "TD",
+     "balance": 80000,
+     "rate": 0.04,
+     "emergency": true
+    }
+   ],
+   "holdings": [
+    {
+     "name": "Income fund",
+     "owner": "Pat",
+     "type": "pie",
+     "value": 200000,
+     "cost": 180000,
+     "fee": 0.012,
+     "monthly": 0,
+     "single": false
+    }
+   ],
+   "mortgage": {
+    "balance": 0,
+    "rate": 0,
+    "repayment": 0,
+    "kind": "table",
+    "limit": 0
+   },
+   "debts": [],
+   "goals": [],
+   "budget": {
+    "income": 3000,
+    "spending": 3500
+   },
+   "prefs": {
+    "risk": "balanced",
+    "shares": true,
+    "retireAge": 65,
+    "target": 45000,
+    "maxShare": 0.1
+   },
+   "people": [
+    {
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": 0.175,
+     "retireAge": "",
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 150000,
+       "fund": "balanced",
+       "fee": 0.005,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 0,
+        "unit": "pct"
+       },
+       "employer": {
+        "amount": 0,
+        "unit": "pct",
+        "afterTax": false
+       }
+      }
+     ],
+     "name": "Pat",
+     "age": 67,
+     "salary": 0
+    }
+   ]
+  },
+  "expected": {
+   "net_worth": 1030000,
+   "ks": 150000,
+   "wp": 0,
+   "acc": 200000,
+   "sustainable": 47507,
+   "extra": null,
+   "short_year": null,
+   "locked_problem": false,
+   "titles": [
+    "1 Pat: PIR is set to 17.5% but should be 10.5%",
+    "1 You're spending more than you earn",
+    "2 Your investment plan: core funds + a small share satellite",
+    "3 Income fund: fee of 1.20% is high",
+    "3 Keep paying yourself the old mortgage payment",
+    "3 Retirement target looks achievable on current settings",
+    "3 You may be holding too much cash"
+   ]
+  }
+ },
+ {
+  "name": "table loan plus fully offset loan",
+  "on": "2026-11-08",
+  "state": {
+   "example": false,
+   "household": "Offset case",
+   "home": 1500000,
+   "other": 0,
+   "dependants": 1,
+   "wills": false,
+   "incomeCover": false,
+   "cash": [
+    {
+     "name": "Savings",
+     "balance": 25000,
+     "rate": 0,
+     "emergency": true
+    }
+   ],
+   "holdings": [
+    {
+     "name": "Global fund",
+     "owner": "joint",
+     "type": "pie",
+     "value": 20000,
+     "cost": 18000,
+     "fee": 0.003,
+     "monthly": 500,
+     "single": false
+    },
+    {
+     "name": "US shares",
+     "owner": "Kahu",
+     "type": "direct_offshore",
+     "value": 60000,
+     "cost": 52000,
+     "fee": 0,
+     "monthly": 0,
+     "single": false
+    }
+   ],
+   "debts": [],
+   "goals": [
+    {
+     "name": "Boat",
+     "target": 40000,
+     "year": 2030,
+     "saved": 5000,
+     "priority": 3
+    }
+   ],
+   "budget": {
+    "income": 19000,
+    "spending": 11000
+   },
+   "prefs": {
+    "risk": "growth",
+    "shares": true,
+    "retireAge": 62,
+    "target": 110000,
+    "maxShare": 0.1
+   },
+   "people": [
+    {
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": 0.28,
+     "retireAge": 55,
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 100000,
+       "fund": "growth",
+       "fee": 0.009,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 4000,
+        "unit": "six_months"
+       },
+       "employer": {
+        "amount": 2400,
+        "unit": "six_months",
+        "afterTax": true
+       }
+      },
+      {
+       "name": "Work scheme",
+       "kind": "workplace",
+       "balance": 90000,
+       "fund": "growth",
+       "fee": 0.004,
+       "pie": false,
+       "vested": 0.8,
+       "voluntary": 0,
+       "member": {
+        "amount": 120,
+        "unit": "fortnight"
+       },
+       "employer": {
+        "amount": 350,
+        "unit": "fortnight",
+        "afterTax": false
+       }
+      }
+     ],
+     "name": "Kahu",
+     "age": 42,
+     "salary": 200000
+    },
+    {
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": "",
+     "retireAge": 60,
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 40000,
+       "fund": "growth",
+       "fee": 0.005,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 0.035,
+        "unit": "pct"
+       },
+       "employer": {
+        "amount": 0.035,
+        "unit": "pct",
+        "afterTax": false
+       }
+      }
+     ],
+     "name": "Mere",
+     "age": 33,
+     "salary": 95000
+    }
+   ],
+   "loans": [
+    {
+     "name": "Fixed loan",
+     "balance": 90000,
+     "rate": 0.0495,
+     "repayment": 1100,
+     "kind": "table",
+     "fixed": true,
+     "offsetCash": 0,
+     "limit": 0
+    },
+    {
+     "name": "Offset loan",
+     "balance": 200000,
+     "rate": 0.059,
+     "repayment": 1300,
+     "kind": "offset",
+     "fixed": false,
+     "offsetCash": 200000,
+     "limit": 0
+    }
+   ]
+  },
+  "expected": {
+   "net_worth": 1745000,
+   "ks": 493797,
+   "wp": 275702,
+   "acc": 285260,
+   "sustainable": 93841,
+   "extra": 2462,
+   "short_year": 2069,
+   "locked_problem": false,
+   "titles": [
+    "1 About $6,849/month of surplus has no job",
+    "1 Plan now where the mortgage payment goes once it's paid off",
+    "2 Check life and income-protection cover",
+    "2 Direct shares are 75% of your investments vs a 15% plan",
+    "2 Kahu: FIF rules apply to your overseas shares",
+    "2 Make or update your wills and enduring powers of attorney",
+    "2 Offset loan: your offset cash covers the whole loan",
+    "2 On track for about $93,841/yr vs a $110,000 target",
+    "2 Pay down Fixed loan first",
+    "2 The house is 74% of your wealth",
+    "2 Your investment plan: core funds + a small share satellite",
+    "3 Fund each goal from its own account or fund",
+    "3 Hold taxable investments in Mere's name",
+    "3 Kahu: KiwiSaver fee of 0.90% could cost about $53,446",
+    "3 Kahu: plan for the Work scheme payout",
+    "3 Mere: confirm your PIR is 28.0%",
+    "3 Your cash is earning very little",
+    "4 Kahu: no government contribution above $180,000",
+    "4 Savings rate is 42%: good habit",
+    "4 Scenario: downsizing the large house one day"
+   ]
+  }
+ },
+ {
+  "name": "partly offset loan with idle cash",
+  "on": "2026-11-08",
+  "state": {
+   "example": false,
+   "household": "Offset case",
+   "home": 1500000,
+   "other": 0,
+   "dependants": 1,
+   "wills": false,
+   "incomeCover": false,
+   "cash": [
+    {
+     "name": "Savings",
+     "balance": 40000,
+     "rate": 0.005,
+     "emergency": true
+    }
+   ],
+   "holdings": [
+    {
+     "name": "Global fund",
+     "owner": "joint",
+     "type": "pie",
+     "value": 20000,
+     "cost": 18000,
+     "fee": 0.003,
+     "monthly": 500,
+     "single": false
+    },
+    {
+     "name": "US shares",
+     "owner": "Kahu",
+     "type": "direct_offshore",
+     "value": 60000,
+     "cost": 52000,
+     "fee": 0,
+     "monthly": 0,
+     "single": false
+    }
+   ],
+   "debts": [],
+   "goals": [
+    {
+     "name": "Boat",
+     "target": 40000,
+     "year": 2030,
+     "saved": 5000,
+     "priority": 3
+    }
+   ],
+   "budget": {
+    "income": 19000,
+    "spending": 11000
+   },
+   "prefs": {
+    "risk": "growth",
+    "shares": true,
+    "retireAge": 62,
+    "target": 110000,
+    "maxShare": 0.1
+   },
+   "people": [
+    {
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": 0.28,
+     "retireAge": 55,
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 100000,
+       "fund": "growth",
+       "fee": 0.009,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 4000,
+        "unit": "six_months"
+       },
+       "employer": {
+        "amount": 2400,
+        "unit": "six_months",
+        "afterTax": true
+       }
+      },
+      {
+       "name": "Work scheme",
+       "kind": "workplace",
+       "balance": 90000,
+       "fund": "growth",
+       "fee": 0.004,
+       "pie": false,
+       "vested": 0.8,
+       "voluntary": 0,
+       "member": {
+        "amount": 120,
+        "unit": "fortnight"
+       },
+       "employer": {
+        "amount": 350,
+        "unit": "fortnight",
+        "afterTax": false
+       }
+      }
+     ],
+     "name": "Kahu",
+     "age": 42,
+     "salary": 200000
+    },
+    {
+     "other": 0,
+     "pie": 0,
+     "priorTaxable": "",
+     "priorPie": "",
+     "currentPir": "",
+     "retireAge": 60,
+     "sl": false,
+     "schemes": [
+      {
+       "name": "KiwiSaver",
+       "kind": "kiwisaver",
+       "balance": 40000,
+       "fund": "growth",
+       "fee": 0.005,
+       "pie": true,
+       "vested": 1,
+       "voluntary": 0,
+       "member": {
+        "amount": 0.035,
+        "unit": "pct"
+       },
+       "employer": {
+        "amount": 0.035,
+        "unit": "pct",
+        "afterTax": false
+       }
+      }
+     ],
+     "name": "Mere",
+     "age": 33,
+     "salary": 95000
+    }
+   ],
+   "loans": [
+    {
+     "name": "Offset loan",
+     "balance": 300000,
+     "rate": 0.059,
+     "repayment": 2500,
+     "kind": "offset",
+     "fixed": false,
+     "offsetCash": 120000,
+     "limit": 0
+    }
+   ]
+  },
+  "expected": {
+   "net_worth": 1670000,
+   "ks": 493797,
+   "wp": 275702,
+   "acc": 263632,
+   "sustainable": 93105,
+   "extra": 2574,
+   "short_year": 2069,
+   "locked_problem": false,
+   "titles": [
+    "1 About $6,849/month of surplus has no job",
+    "1 Plan now where the mortgage payment goes once it's paid off",
+    "2 Check life and income-protection cover",
+    "2 Direct shares are 75% of your investments vs a 15% plan",
+    "2 Finish the mortgage, then redirect the repayment",
+    "2 Kahu: FIF rules apply to your overseas shares",
+    "2 Make or update your wills and enduring powers of attorney",
+    "2 On track for about $93,105/yr vs a $110,000 target",
+    "2 The house is 76% of your wealth",
+    "2 Your investment plan: core funds + a small share satellite",
+    "3 Fund each goal from its own account or fund",
+    "3 Hold taxable investments in Mere's name",
+    "3 Kahu: KiwiSaver fee of 0.90% could cost about $53,446",
+    "3 Kahu: plan for the Work scheme payout",
+    "3 Mere: confirm your PIR is 28.0%",
+    "3 Your cash is earning very little",
+    "4 Kahu: no government contribution above $180,000",
+    "4 Savings rate is 42%: good habit",
+    "4 Scenario: downsizing the large house one day"
+   ]
+  }
+ }
+]

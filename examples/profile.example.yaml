@@ -1,0 +1,84 @@
+# Example household. Copy to my-data/profile.yaml (git-ignored) and replace with your numbers.
+# Rates are decimals: 0.035 = 3.5%.
+household: The Example whānau
+
+people:
+  - name: Alex
+    age: 44
+    salary: 145000
+    other_taxable_income: 1200      # bank interest, NZ dividends (non-PIE)
+    current_pir: 0.28               # what your fund providers have on file (optional)
+    # Retirement schemes. kind: kiwisaver (locked to 65) or workplace (paid out when you leave the job).
+    # Contributions: unit pct (amount 0.035 = 3.5% of salary) or $ per week|fortnight|month|year|six_months.
+    # Employer $ copied from a fund statement are usually after tax: set after_tax: true.
+    schemes:
+      - name: KiwiSaver
+        kind: kiwisaver
+        balance: 95000
+        fund_type: growth
+        fee_pct: 0.006
+        member: {amount: 0.06, unit: pct}
+        employer: {amount: 2400, unit: six_months, after_tax: true}
+      - name: Workplace savings scheme
+        kind: workplace
+        balance: 70000
+        fund_type: growth
+        fee_pct: 0.005
+        member: {amount: 110, unit: fortnight}
+        employer: {amount: 0.07, unit: pct}
+  - name: Sam
+    age: 42
+    # retirement_age: 60           # optional per person; otherwise preferences.retirement_age
+    salary: 62000
+    current_pir: 0.28
+    kiwisaver: {balance: 82000, employee_rate: 0.035, employer_rate: 0.035, fund_type: conservative, fee_pct: 0.009}  # short legacy form also works
+
+home_value: 1650000
+vehicles_and_other: 45000
+dependants: 2
+has_wills: true
+has_income_protection: false
+
+cash:
+  - {name: Everyday + on-call savings, balance: 18000, interest_rate: 0.025}
+  - {name: Term deposit, balance: 20000, interest_rate: 0.042}
+
+holdings:
+  - {name: Global index fund (PIE), owner: joint, type: pie, value: 32000, cost: 26000, fund_type: aggressive, fee_pct: 0.003, monthly_contribution: 400}
+  - {name: NZ shares (direct), owner: Alex, type: nz_listed, value: 9000, cost: 7500, fund_type: aggressive, fee_pct: 0.0, single_company: false}
+  - {name: US shares (direct), owner: Alex, type: direct_offshore, value: 44000, cost: 41500, fund_type: aggressive, fee_pct: 0.0, single_company: false}
+
+# Home loans, one entry each. kind: table | offset | revolving.
+# For an offset loan, put the cash in its offset accounts in offset_cash (not under cash above).
+loans:
+  - name: Mortgage
+    balance: 68000
+    rate: 0.0495
+    monthly_repayment: 3200
+    kind: table
+    fixed: true                     # fixed rate: extra repayments may trigger break fees
+  # - {name: Offset loan, balance: 200000, rate: 0.059, monthly_repayment: 1300, kind: offset, offset_cash: 200000}
+
+debts: []                           # e.g. {name: Credit card, balance: 2500, rate: 0.2095, monthly_payment: 300}
+
+goals:
+  - {name: Family trip to Europe, target_amount: 25000, target_year: 2028, saved_so_far: 6000, priority: 2}
+  - {name: Kids' university fund, target_amount: 60000, target_year: 2036, saved_so_far: 5000, priority: 1}
+  - {name: Car replacement, target_amount: 30000, target_year: 2030, saved_so_far: 0, priority: 2}
+
+# Used only when no budget CSV is passed. Run `python -m kiwiwealth budget <csv>` to get these.
+budget:
+  monthly_net_income: 13400
+  monthly_spending: 9800
+  source: estimate
+
+preferences:
+  risk_tolerance: growth            # conservative | balanced | growth | aggressive
+  preferred_vehicles: [managed_funds, shares]
+  retirement_age: 62
+  retirement_income_target: 85000   # per year for the household, in today's dollars
+  max_single_share_pct: 0.10
+
+# Optional overrides of planning assumptions (see kiwiwealth/profile.py)
+assumptions:
+  inflation: 0.02
