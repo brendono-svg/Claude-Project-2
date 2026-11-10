@@ -4,7 +4,9 @@ Status: plan agreed in outline, nothing built. Facts marked **(verify)** were no
 confirmed against a primary source and belong in the Phase 0 spike.
 
 Decided: personal use only; KiwiSaver first; lives in this repo as `fundcompare/`
-beside `kiwiwealth/`.
+beside `kiwiwealth/`; **data comes from the public fund update PDFs, not the API**
+(API access needs a Disclose Register organisation key and MBIE approval, which a
+private individual can't meet).
 
 ## 1. Goal
 
@@ -24,15 +26,18 @@ Service Providers Register (FSPR). The FSPR only tells us whether a provider is 
 and since when, which is a minor credibility input.
 
 The Disclose Register was replaced on 23 March 2026. The old SOAP public APIs were retired
-and a new REST API is published on api.business.govt.nz. Older scraping guides and CSV
-links found online are probably stale.
+and a new REST API is published on api.business.govt.nz, but it is for registered
+organisations only, so we don't use it. The public register search is free and needs no
+login; that is where the PDFs come from. Older scraping guides written for the old site
+are stale.
 
 ## 3. Data sources
 
 | Source | What it gives | Access | Notes |
 | --- | --- | --- | --- |
-| Disclose REST API | Offers, schemes, funds, fund filings, historic versions | API key from api.business.govt.nz **(verify sign-up terms and rate limits)** | Primary source |
-| Quarterly fund updates (on Disclose) | Returns, fees, mix, top 10 holdings, FUM, investors, start date, risk indicator | Structured data via API, PDF as fallback | Filed for 31 Mar, 30 Jun, 30 Sep, 31 Dec |
+| Quarterly fund updates (public Disclose search) | Returns, fees, mix, top 10 holdings, FUM, investors, start date, risk indicator | PDF per fund per quarter **(verify: one PDF per fund, or one per scheme covering all funds)** | **Primary source.** Filed for 31 Mar, 30 Jun, 30 Sep, 31 Dec |
+| Provider websites | The same fund update PDFs | PDF | Second source when the register is awkward to crawl |
+| Public Disclose search pages | List of KiwiSaver schemes and their funds, offer numbers | Web pages **(verify: plain HTML, or a JS app with a JSON backend)** | Fund discovery |
 | Full portfolio holdings (on Disclose) | Every holding per fund | File per fund **(verify format and frequency)** | Best evidence for underlying managers and passive/active |
 | PDS, SIPO, other material information (on Disclose) | Philosophy, benchmarks, target ranges, named underlying managers | PDFs | Needs LLM extraction |
 | FMA archived quarterly sheets | Consolidated fund update data up to 31 Dec 2022 | Excel download | FMA has stopped publishing these; useful for history backfill |
@@ -41,13 +46,22 @@ links found online are probably stale.
 | Canstar, Morningstar KiwiSaver survey, Consumer NZ, Mindful Money | Ratings, awards, ethical screens | Websites and PDFs | Copyright and terms of use need a human check before any automated capture |
 | FSPR, FMA licence list | Provider registration date, licence status | Website | Small credibility input |
 
-Fields expected in each fund update (from the regulated template, **verify against the API**):
+Fields expected in each fund update (from the regulated template, **verify against real PDFs**):
 fund total value, number of investors, fund start date, risk indicator (1 to 7),
 past-year return after fees (before tax and after tax at 28% PIR), five-year average
 annual return, year-by-year annual returns (up to 10 years), market index return,
 total annual fund charges split into manager's basic fee, performance fee and other
 charges, fixed dollar fees, actual and target investment mix by asset class, top 10
 investments, currency hedging, key personnel.
+
+Why PDFs are workable: fund updates follow a template set by the FMC Regulations, with
+the same section headings in every document ("How has the fund performed?", "What fees
+are investors charged?", "What does the fund invest in?", "Top 10 investments", "Key
+personnel"). Most are generated from the same data the provider files, so they have a
+text layer. The annual returns bar chart shows up to 10 years, so the current PDF alone
+gives a decade of yearly returns; history backfill is needed mainly for FUM and fees.
+Hard parts: values that appear only as chart labels (investment mix pie, returns bars),
+provider-specific layouts, and the occasional scanned PDF.
 
 ## 4. Method decisions to settle
 
@@ -106,11 +120,26 @@ that need a human decision.
 New Python package `fundcompare/` beside `kiwiwealth/`, same conventions (pytest, dated
 sources, source link on every figure).
 
-- **Raw layer:** API responses and PDFs stored unchanged, with fetch date and hash,
-  in a git-ignored data folder. The API key is read from an environment variable only.
-- **Fixtures:** recorded raw responses for 2-3 KiwiSaver schemes, key stripped, are
-  committed under `tests/fundcompare/`. Build and test models work offline against
-  these and do not call the live API.
+- **Fund list:** `seed/kiwisaver_funds.csv` (scheme, fund, offer number, provider URL),
+  built from the public search and hand-maintained. About 30 schemes and a few hundred
+  funds, so a checked list beats a fragile crawler.
+- **Fetcher:** downloads fund update PDFs per fund per quarter. Polite: one request
+  every few seconds, generic user agent, skip files already held (by hash). Check the
+  register's terms of use first **(verify)**.
+- **Raw layer:** PDFs stored unchanged with fetch date, source URL and hash, in a
+  git-ignored data folder.
+- **Parser, two tiers:**
+  1. Deterministic: `pdfplumber` text and tables, anchored on the template headings.
+     Each provider layout gets a small profile if needed.
+  2. LLM fallback (Sonnet, reading the page image) only for fields tier 1 can't get,
+     mainly chart-only values. Output carries the page number and a confidence flag.
+- **Validation** after every parse: mix sums to 100% (±1), fee parts sum to the total,
+  returns within plausible bounds, fund value and investor numbers present, 1-year
+  return equals the latest bar in the annual chart. A failed check marks the row
+  for review; it never fills in a guess.
+- **Fixtures:** fund update PDFs for 2-3 KiwiSaver schemes (public documents, so fine
+  to commit) with hand-checked expected values, under `tests/fundcompare/`. Build and
+  test models work offline against these.
 - **Normalised layer:** SQLite. Tables: `provider`, `scheme`, `fund`, `fund_update`
   (one row per fund per quarter), `asset_mix`, `holding`, `fee`, `document`,
   `manager`, `fund_manager_link`, `extraction` (LLM output with quote and page
@@ -128,11 +157,13 @@ sources, source link on every figure).
 
 | Work | Model | Why |
 | --- | --- | --- |
-| Schema, ingest pipeline, metrics, ranking, UI | Opus (build) | Design-heavy, needs consistency across modules |
+| Schema, fetcher, deterministic parser, validation rules, metrics, ranking, UI | Opus (build) | Design-heavy, needs consistency across modules |
+| Building the seed fund list, one provider per agent | Sonnet agents | Bounded lookup work, human checks the result |
+| Hand-checked expected values for fixture PDFs | Sonnet agent, human spot-check | The ground truth every parser test depends on |
+| LLM fallback extraction for fields the parser misses | Sonnet | Reads page images, returns value plus page reference |
 | SIPO and PDS extraction to a fixed JSON schema, one provider per agent | Sonnet agents | Parallel, bounded, each returns quotes and page numbers |
-| External ratings capture (after terms check) | Sonnet agents | Small per-site tasks |
 | Manager alias matching | Sonnet proposes, human approves ambiguous cases | Errors here corrupt every downstream view |
-| Schema validation, mix sums to 100%, outlier checks, spot-checks against Smart Investor | Haiku subagents | Cheap, repeatable, read-only |
+| Run validation, triage failed rows, spot-check a sample against Smart Investor | Haiku subagents | Cheap, repeatable, read-only |
 | Checkpoint review | Opus advisor via `/consult` | Per CLAUDE.md |
 
 Rules for capture agents: write only to the raw layer and the `extraction` table, never
@@ -141,23 +172,25 @@ to derived tables; every extracted claim carries a quote and a document referenc
 
 ## 7. Phases
 
-0. **Spike.** Get an API key and pull one KiwiSaver scheme end to end. Exit criteria,
+0. **Spike** (run locally or with the hosts allowed; see risks). Exit criteria,
    written back into this document:
-   - endpoints used, and a field map against the list in section 3;
-   - history depth, rate limits and sign-up terms;
-   - every **(verify)** resolved;
-   - one fund's values checked by hand against its published fund update PDF;
-   - fixtures for 2-3 schemes committed;
-   - a decision: **structured** (API returns fund update fields), **PDF fallback**
-     (API returns documents only, so Phases 1-3 parse the regulated fund update
-     template instead), or **stop**.
-1. **MVP.** Ingest all KiwiSaver funds for the latest quarter, categorise, top five by
+   - how to list KiwiSaver funds and reach each fund update PDF on the public register
+     (direct links, a JSON backend behind the search page, or provider sites);
+   - whether past quarters' PDFs are still downloadable, and how far back;
+   - the register's terms of use for automated download;
+   - latest fund updates for 2-3 differently sized providers parsed by a first-cut
+     parser, with a field coverage table against section 3 (text layer, chart label,
+     or missing);
+   - one fund's values checked by hand against the PDF;
+   - PDFs and expected values committed as fixtures;
+   - every **(verify)** resolved, and a decision on how much needs the LLM fallback.
+1. **MVP.** Seed list complete; fetch and parse all KiwiSaver funds for the latest quarter, categorise, top five by
    1-year and 5-year return per category, with the track-record, minimum FUM and
    open-to-new-investors gates applied. Done when `python -m pytest -q tests/fundcompare`
    passes with the network off.
 2. **Fees and credibility.** Dollar fees, fund age, investor numbers, scorecard.
-3. **All MIS funds and history.** Extend beyond KiwiSaver, backfill past quarters,
-   keep closed funds.
+3. **History, then all MIS funds.** Backfill past quarters' PDFs (and the FMA sheets
+   to Dec 2022 for FUM and fees), keep closed funds, then extend beyond KiwiSaver.
 4. **Approach and managers.** SIPO extraction, passive/active classification, manager table.
 5. **External ratings.** Entered by hand with a source link and date (personal use,
    no automated capture).
@@ -166,15 +199,16 @@ to derived tables; every extracted claim carries a quote and a document referenc
 
 ## 8. Risks
 
-- API access looks built for filers: the subscription must use the same RealMe login
-  as the Disclose Register, calls need an organisation key from a Disclose Register
-  organisation, and MBIE approves each subscription (sandbox first). A private
-  individual may not qualify **(verify with MBIE API support)**. Fallback: download
-  fund update PDFs from the free public register search and parse the fixed template.
-- This cloud session cannot reach portal.api.business.govt.nz (DNS blocked by the
-  network allowlist), so the spike needs that host allowed or must run locally.
-
-- New register API may not expose full fund update history, or may limit bulk pulls.
+- Network: this cloud session's allowlist blocks disclose-register.companiesoffice.govt.nz,
+  fma.govt.nz and smartinvestor.sorted.org.nz. The spike and fetcher must run locally,
+  or a cloud environment must allow those hosts (plus provider sites).
+- The new public register may be a JS app that is hard to crawl, or may only show the
+  latest fund update. Fallbacks: provider websites, which keep past fund updates, and
+  the hand-maintained seed list.
+- Parsing drift: a provider changes its layout and fields silently go missing. The
+  validation checks and a per-provider coverage report catch this each quarter.
+- Chart-only values may need the LLM fallback for many providers, which costs more
+  and needs its own checks.
 - Ratings sites may prohibit automated capture or republication.
 - LLM extraction from SIPOs will be uneven; providers describe the same thing very differently.
 - Fund updates lag by one to two months, and 1-year rankings are noisy. The app should
