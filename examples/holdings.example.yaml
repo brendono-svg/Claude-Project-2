@@ -1,0 +1,16 @@
+# Your direct shareholdings for `python -m sharepicker watchlist`. Copy to my-data/holdings.yaml.
+screen: screen.example.yaml          # paths are relative to this file
+profile: profile.example.yaml        # optional kiwiwealth profile: tax rates, people, satellite size
+broker: sharesies
+max_sector_pct: 0.35
+# The list below replaces the profile's NZX/ASX share holdings (types nz_listed, asx_exempt).
+# The profile's direct_offshore holdings (e.g. US shares) still count towards the satellite and,
+# with this on, towards each person's $50k FIF threshold.
+include_profile_offshore: true
+
+holdings:                            # cost in NZD, owner is a person in the profile or "joint"
+  - {ticker: KAU.NZ, owner: Alex, units: 300, cost: 3900}
+  - {ticker: PUR.NZ, owner: joint, units: 250, cost: 4200}
+  - {ticker: KAU.AX, owner: Sam, units: 100, cost: 1500}
+  - {ticker: BOO.AX, owner: Alex, units: 400, cost: 4600}
+  - {ticker: GUM.AX, owner: Sam, units: 600, cost: 3000}

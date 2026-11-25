@@ -493,7 +493,7 @@ def rule_investment_plan(a: Analysis) -> None:
     total = p.total_investments
     high_rate = [x.name for x in p.people if a.marginal_rates[x.name] > 0.28]
 
-    core = 0.85 if "shares" in prefs.preferred_vehicles else 1.0
+    core = prefs.core_pct
     lines = [f"Core ({pct(core, 0)}): low-fee diversified PIE funds, either global and NZ/Australian share index "
              f"funds or a single {prefs.risk_tolerance} multi-asset fund."]
     if core < 1:

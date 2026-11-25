@@ -179,6 +179,12 @@ class Preferences:
     retirement_income_target: float = 70_000  # per year, today's dollars, whole household
     max_single_share_pct: float = 0.10
 
+    @property
+    def core_pct(self) -> float:
+        """Share of investments for low-fee diversified funds. The rest (the satellite)
+        is for individual shares, and only if shares are a preferred vehicle."""
+        return 0.85 if "shares" in self.preferred_vehicles else 1.0
+
 
 @dataclass
 class Profile:

@@ -68,8 +68,9 @@ it does not give personalised advice.
   for companies that attach NZ imputation credits.
 - **FIF:** NZX-listed NZ companies are outside FIF. ASX-listed **Australian-resident
   companies on the approved index that keep franking accounts** are exempt from FIF.
-  Everything else (for example NZ-domiciled ASX listings, ETFs, non-Australian ASX
-  listings) counts toward the NZ$50k-per-person FIF threshold. Reuse the threshold logic
+  NZ-resident companies are never FIFs, even when listed only on the ASX. Everything else
+  (for example ETFs, stapled securities, non-Australian ASX listings) counts toward the
+  NZ$50k-per-person FIF threshold. Reuse the threshold logic
   in `kiwiwealth/nz_rules.py`, don't duplicate it.
 - **Brokerage and FX costs:** a configurable broker table (fee per trade, FX spread) for
   NZ platforms. Show the round-trip cost as a percentage of a typical parcel.

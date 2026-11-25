@@ -1,0 +1,37 @@
+# sharepicker screen config. Copy to my-data/screen.yaml (my-data/ is git-ignored).
+data:
+  source: csv                 # csv (offline files) | yahoo (live prices + dividends, CSV for the rest)
+  folder: my-data/sample      # create with: python -m sharepicker sample-data my-data/sample
+  reporting_lag_months: 3     # financials count from this long after the period ends
+  # cache_dir: my-data/cache/yahoo
+  # cache_days: 1
+
+# as_of: 2026-11-20           # default: the latest date in the data (or today)
+marginal_tax_rate: 0.33       # for after-tax dividend yields
+top_n: 10
+stale_after_days: 10
+
+weights: balanced             # balanced | value | quality | income | momentum, or per factor:
+# weights: {value: 1, quality: 1.5, growth: 0.5, momentum: 0.5, income: 1, risk: 0.5}
+
+filters:
+  exchanges: [NZX, ASX]
+  min_market_cap_nzd: 100000000
+  min_traded_value_nzd: 50000 # median daily traded value; NZX small caps often fail this
+  min_years_listed: 3
+  security_types: [company]   # add etf, stapled, unit_trust to include them
+  exclude_sectors: []         # e.g. [Energy] for an ethical screen
+  exclude_tickers: []
+
+benchmarks: {NZX: ^NZ50, ASX: ^AXJO}
+
+backtest:
+  top_n: 8
+  capital_nzd: 50000
+  broker: sharesies           # sharesies | hatch | asb | jarden (see sharepicker/market_rules.py)
+  # start: 2021-01-01
+  # end: 2026-11-20
+
+# Override broker fees if yours differ:
+# brokers:
+#   mybroker: {NZX: {pct: 0.003, min: 15, max: null}, ASX: {pct: 0.003, min: 30, max: null}, fx: 0.005}
