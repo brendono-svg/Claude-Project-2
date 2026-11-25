@@ -58,7 +58,7 @@ def watch(holdings: list[dict], screen: ScreenResult, source, as_of: date, profi
     for h in holdings:
         t = h["ticker"]
         lst = universe.get(t)
-        pos = Position(t, h.get("owner", "joint"), float(h.get("units", 0)), float(h.get("cost", 0)))
+        pos = Position(t, _owner(h.get("owner", "joint"), people), float(h.get("units", 0)), float(h.get("cost", 0)))
         if lst is None:
             pos.note = "not in the data universe"
             positions.append(pos)
@@ -127,15 +127,26 @@ def watch(holdings: list[dict], screen: ScreenResult, source, as_of: date, profi
 
     # --- FIF per person ---------------------------------------------------------
     names = people or ["joint"]
+    unknown = sorted({p.owner for p in positions if p.owner != "joint" and p.owner not in names})
+    if unknown and people:
+        res.alerts.append(f"Owner {', '.join(unknown)} isn't a person in your profile. Those holdings are counted "
+                          "towards every person's FIF threshold until you fix the name.")
+
+    def share_of(owner: str, person: str) -> float:
+        if owner == person:
+            return 1.0
+        if owner == "joint":
+            return 1 / len(names)
+        return 1.0 if owner not in names else 0.0   # unknown owner: count it in full for everyone (cautious)
+
     for person in names:
-        share_of = lambda owner: 1.0 if owner == person else (1 / len(names) if owner == "joint" else 0.0)  # noqa: E731
-        cost = sum(p.cost_nzd * share_of(p.owner) for p in positions if p.fif_type == mr.FIF)
-        value = sum((p.value_nzd or 0) * share_of(p.owner) for p in positions if p.fif_type == mr.FIF)
+        cost = sum(p.cost_nzd * share_of(p.owner, person) for p in positions if p.fif_type == mr.FIF)
+        value = sum((p.value_nzd or 0) * share_of(p.owner, person) for p in positions if p.fif_type == mr.FIF)
         if profile and include_profile_offshore:
             for h in profile.holdings:
                 if h.type == "direct_offshore":
-                    cost += h.cost * share_of(h.owner)
-                    value += h.value * share_of(h.owner)
+                    cost += h.cost * share_of(h.owner, person)
+                    value += h.value * share_of(h.owner, person)
         rate = 0.33
         if profile and profile.person(person):
             rate = nz.marginal_tax_rate(profile.person(person).taxable_income, as_of)
@@ -198,8 +209,9 @@ def watch(holdings: list[dict], screen: ScreenResult, source, as_of: date, profi
             parcel = min(parcel_cap, swap.value_nzd)
         else:
             parcel = min(parcel_cap, room) if room is not None else parcel_cap
-        if plan_total > 0 and not swap:  # stay under the sector limit once this parcel is added
-            parcel = min(parcel, max((max_sector_pct * (plan_total + parcel) - sector_now), 0))
+        if plan_total > 0 and not swap:
+            # Largest x with (sector_now + x) / (plan_total + x) <= max_sector_pct
+            parcel = min(parcel, max((max_sector_pct * plan_total - sector_now) / (1 - max_sector_pct), 0))
         if parcel < 500:
             continue
         ftype, _ = screen.fif.get(r.ticker, ("", ""))
@@ -216,3 +228,14 @@ def watch(holdings: list[dict], screen: ScreenResult, source, as_of: date, profi
         if room is not None and not swap_mode:
             room -= parcel
     return res
+
+
+def _owner(owner: str, people: list[str]) -> str:
+    """Match an owner to a profile person ignoring case and spaces ("alex" -> "Alex")."""
+    o = str(owner).strip()
+    if o.lower() == "joint":
+        return "joint"
+    for p in people:
+        if p.lower() == o.lower():
+            return p
+    return o

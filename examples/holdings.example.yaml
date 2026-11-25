@@ -5,7 +5,8 @@ broker: sharesies
 max_sector_pct: 0.35
 # The list below replaces the profile's NZX/ASX share holdings (types nz_listed, asx_exempt).
 # The profile's direct_offshore holdings (e.g. US shares) still count towards the satellite and,
-# with this on, towards each person's $50k FIF threshold.
+# with this on, towards each person's $50k FIF threshold. Profile holdings have no ticker, so
+# list each non-exempt ASX share in ONE place only (here, not as direct_offshore in the profile).
 include_profile_offshore: true
 
 holdings:                            # cost in NZD, owner is a person in the profile or "joint"

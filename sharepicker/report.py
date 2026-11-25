@@ -18,7 +18,7 @@ DISCLAIMER = ("> General information for our own use, not regulated financial ad
 
 FIF_LABEL = {mr.NZ_LISTED: "NZ (no FIF)", mr.ASX_EXEMPT: "AU exempt", mr.FIF: "FIF"}
 GROUP_WORDS = {"value": "cheap on its numbers", "quality": "a high-quality business", "growth": "growing fast",
-               "momentum": "a strong price trend", "income": "a solid, well-covered dividend",
+               "momentum": "a strong price trend", "income": "a solid dividend",
                "risk": "a steady share price"}
 GROUP_WEAK = {"value": "expensive", "quality": "weak on quality (returns, debt or consistency)",
               "growth": "slow growth", "momentum": "a weak price trend", "income": "little or poorly covered income",

@@ -374,3 +374,35 @@ def test_watchlist_after_tax_dividends_depend_on_owner(sample):
     lo, hi = w.positions
     assert lo.dividends_nzd == pytest.approx(hi.dividends_nzd) and lo.dividends_nzd > 0
     assert lo.dividends_after_tax_nzd > hi.dividends_after_tax_nzd
+
+
+def test_watchlist_owner_names_and_unknown_owners(sample):
+    from kiwiwealth.profile import Person, Profile
+    from sharepicker.portfolio import watch
+    src = CsvSource(sample)
+    res = run_screen({}, src, ON)
+    prof = Profile("Test", [Person("Alex", 40, salary=90_000), Person("Sam", 40, salary=60_000)])
+    w = watch([{"ticker": "GUM.AX", "owner": "alex", "units": 100, "cost": 6_000}], res, src, ON, prof)
+    assert w.positions[0].owner == "Alex" and w.fif["Alex"]["cost"] == 6_000 and w.fif["Sam"]["cost"] == 0
+    w2 = watch([{"ticker": "GUM.AX", "owner": "Alix", "units": 100, "cost": 6_000}], res, src, ON, prof)
+    assert any("isn't a person" in a for a in w2.alerts)
+    assert w2.fif["Alex"]["cost"] == 6_000 and w2.fif["Sam"]["cost"] == 6_000
+
+
+def test_idea_parcels_respect_sector_cap(sample):
+    from sharepicker.portfolio import watch
+    src = CsvSource(sample)
+    res = run_screen({}, src, ON)
+    hold = [{"ticker": t, "owner": "A", "units": 300, "cost": 3_000} for t in ("PUR.NZ", "BOO.AX", "WTL.AX", "EMU.AX")]
+    w = watch(hold, res, src, ON, max_sector_pct=0.35, n_ideas=8)
+    sectors, total = dict(w.by_sector), w.total_value
+    for i in w.ideas:
+        sectors[i["sector"]] = sectors.get(i["sector"], 0) + i["parcel_nzd"]
+        total += i["parcel_nzd"]
+        assert sectors[i["sector"]] / total <= 0.35 + 1e-3
+
+
+def test_benchmark_returns_line_up_by_month(sample):
+    bt = run_backtest({"backtest": {"top_n": 5}}, CsvSource(sample), date(2024, 1, 1), ON)
+    for v in bt.bench.values():
+        assert len(v) == len(bt.returns)

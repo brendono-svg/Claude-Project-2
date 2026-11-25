@@ -28,14 +28,14 @@ class BacktestResult:
     top_n: int
     months: list[date] = field(default_factory=list)
     returns: list[float] = field(default_factory=list)
-    bench: dict[str, list[float]] = field(default_factory=dict)
+    bench: dict[str, list[float | None]] = field(default_factory=dict)  # aligned with months; None = no data
     holdings: list[list[str]] = field(default_factory=list)
     turnover: list[float] = field(default_factory=list)
     costs: list[float] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     def stats(self, rets: list[float] | None = None) -> dict[str, float | None]:
-        r = self.returns if rets is None else rets
+        r = [x for x in (self.returns if rets is None else rets) if x is not None]
         if not r:
             return {"cagr": None, "volatility": None, "max_drawdown": None, "total": None}
         growth, peak, mdd = 1.0, 1.0, 0.0
@@ -50,9 +50,10 @@ class BacktestResult:
 
     def hit_rate(self, bench: str) -> float | None:
         b = self.bench.get(bench)
-        if not b:
+        pairs = [(x, y) for x, y in zip(self.returns, b or []) if y is not None]
+        if not pairs:
             return None
-        return sum(1 for x, y in zip(self.returns, b) if x > y) / len(b)
+        return sum(1 for x, y in pairs if x > y) / len(pairs)
 
     @property
     def annual_turnover(self) -> float:
@@ -136,13 +137,19 @@ def run_backtest(cfg: dict, source: DataSource, start: date, end: date) -> Backt
         res.turnover.append(turnover)
         res.holdings.append(picks)
         for ex, b in benches.items():
+            if not len(b):
+                continue
             b0, b1 = b.on(d0, 10), b.on(d1, 10)
+            r = None
             if b0 and b1:
                 cur = "AUD" if ex == "ASX" else "NZD"
                 f0, f1 = fx.rate(cur, "NZD", d0), fx.rate(cur, "NZD", d1)
-                res.bench.setdefault(bench_names[ex], []).append(b1 / b0 * ((f1 / f0) if f0 and f1 else 1) - 1)
-    if res.bench and len({len(v) for v in res.bench.values()} | {len(res.returns)}) == 1 and len(res.bench) > 1:
-        res.bench["50/50 blend"] = [statistics.fmean(x) for x in zip(*res.bench.values())]
+                r = b1 / b0 * ((f1 / f0) if f0 and f1 else 1) - 1
+            # Pad so every benchmark list lines up month by month with the strategy's returns.
+            res.bench.setdefault(bench_names[ex], [None] * (len(res.returns) - 1)).append(r)
+    if len(res.bench) > 1:
+        res.bench["50/50 blend"] = [None if any(v is None for v in x) else statistics.fmean(x)
+                                    for x in zip(*res.bench.values())]
     if not any(lst.listed_to for lst in universe):
         res.warnings.append("No delisted shares in the data: survivorship bias flatters these results.")
     res.warnings.append("Benchmarks are the index series supplied; if they are price indexes (no dividends), "
