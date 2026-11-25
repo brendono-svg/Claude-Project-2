@@ -47,7 +47,7 @@ def financials_table(funds: list[Fundamentals], as_of: date) -> list[str]:
 
 def strength_lines(facts: dict) -> list[str]:
     tests = facts.get("f_score_tests")
-    if not tests:
+    if not tests or all(ok is None for _, ok in tests):
         return []
     out = [f"**Financial strength {facts.get('f_score_text', 'n/a')}** (Piotroski tests with data):", ""]
     for name, ok in tests:

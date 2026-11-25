@@ -282,7 +282,8 @@ class YahooSource:
             q = urllib.parse.urlencode({"type": ",".join(self.FUND_FIELDS), "period1": 1262304000,
                                         "period2": int(time.time()) + 86400})
             data = self._get(self.FUND_URL.format(sym=urllib.parse.quote(sym), q=q),
-                             f"{sym.replace('^', '_')}.fundamentals.json", f"{sym} fundamentals")
+                             # Cache name follows the field list, so adding a field refetches.
+                             f"{sym.replace('^', '_')}.fundamentals-{len(self.FUND_FIELDS)}.json", f"{sym} fundamentals")
             out = self._parse_fundamentals(company_id, data)
         self._funds[company_id] = out
         return out

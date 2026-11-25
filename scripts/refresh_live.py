@@ -89,6 +89,8 @@ def main() -> int:
         arch_path.parent.mkdir(parents=True, exist_ok=True)
         arch_path.write_text(json.dumps(archive, separators=(",", ":")), encoding="utf-8")
         print(f"Archive: {after} items ({after - before:+d})", file=sys.stderr)
+        if hasattr(source, "load_imputation"):
+            source.load_imputation(archive)     # NZX imputation credits collected just now
     elif old is not None:
         arch_path.parent.mkdir(parents=True, exist_ok=True)
         arch_path.write_text(json.dumps(old, separators=(",", ":")), encoding="utf-8")
