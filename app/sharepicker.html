@@ -266,7 +266,7 @@ async function loadLive() {
     const d = await r.json();
     load(d, false);
     $("dataSrc").value = "live";
-    $("liveNote").textContent = `Live data: ${d.source}. Prices, dividends and annual accounts come from Yahoo Finance (accounts as restated, not as first reported). Franking and imputation are known only where listed; company announcements aren't included yet.`;
+    $("liveNote").textContent = `Live data: ${d.source}. Prices, dividends and annual accounts: Yahoo Finance (accounts as restated). Announcements: ASX and NZX. Imputation: NZX. Short interest: ASIC. Headlines: Google News. Open a share, then its full brief, for the detail.`;
     $("liveNote").hidden = false;
     return true;
   } catch (e) {
@@ -335,6 +335,7 @@ function card(s) {
       <span class="bars">${GROUPS.map(g => { const v = s.groups[g]; return `<span class="bar"><i><b class="${v == null ? "na" : ""}" style="width:${v ?? 0}%"></b></i>${SHORT[g]}</span>`; }).join("")}</span>
       <span class="meta"><span>Yield (NZ, gross) <span class="num">${pct(s.metrics.gross_yield_nz)}</span></span>
         <span>${FIF[s.fif.type] || ""}</span><span>Cap NZ${money(s.market_cap_nzd)}</span>
+        ${s.facts?.f_score_text ? `<span title="Piotroski tests passed out of those with data">Strength ${esc(s.facts.f_score_text)}</span>` : ""}
         ${reds ? `<span class="dots" title="${reds} red flag(s)">${"●".repeat(reds)}</span>` : ""}
         ${s.research?.next_results ? `<span>Results ${esc(s.research.next_results.date)}</span>` : ""}
         ${s.research?.lenses?.thesis?.startsWith("BROKEN") ? `<span class="dots">thesis broken</span>` : ""}</span>

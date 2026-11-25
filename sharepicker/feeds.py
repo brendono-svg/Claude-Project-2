@@ -124,6 +124,49 @@ def nzx_announcements(f: Fetcher, listings: list[Listing]) -> list[dict] | None:
     return out
 
 
+def nzx_company(f: Fetcher, lst: Listing) -> dict | None:
+    """Company page: past dividends with imputation credits, balance date, board and management."""
+    code = _code(lst)
+    html = f.text(f"https://www.nzx.com/instruments/{code}", f"nzx-{code}.html")
+    if html is None:
+        return None
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not m:
+        f.errors[f"nzx {code}"] = "page layout changed"
+        return None
+    try:
+        queries = json.loads(m.group(1))["props"]["pageProps"]["dehydratedState"]["queries"]
+    except (KeyError, TypeError, ValueError):
+        f.errors[f"nzx {code}"] = "page layout changed"
+        return None
+    out: dict[str, Any] = {"dividends": [], "people": [], "year_end": None, "first_listed": None, "auditor": None}
+    for q in queries:
+        key, data = q.get("queryKey") or [], (q.get("state") or {}).get("data")
+        if key[:2] == ["instrument", "pastDividends"] and isinstance(data, list):
+            for dv in data:
+                try:
+                    cash = float(dv["amount"]) / 100          # cents per share
+                    ic = float(dv.get("imputationCreditAmount") or 0)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                full = cash * 28 / 72
+                when = datetime.fromtimestamp(dv.get("recordDate") or dv.get("expectedDate"), timezone.utc)
+                out["dividends"].append({
+                    "id": f"NZXDIV:{dv.get('id')}", "ticker": lst.ticker, "date": when.date().isoformat(),
+                    "kind": dv.get("type"), "cash": round(cash, 6), "currency": dv.get("currencyCode", "NZD"),
+                    "imputation_credit": ic, "imputed_pct": round(min(ic / full, 1.0), 4) if full else None})
+        elif key[:2] == ["company", "summary"] and isinstance(data, dict):
+            ye = data.get("financialYearEnd") or {}
+            if ye.get("month"):
+                out["year_end"] = f"{int(ye['month']):02d}-{int(ye.get('day') or 30):02d}"
+            out["first_listed"] = (data.get("firstListedDate") or "")[:10] or None
+            out["auditor"] = data.get("auditor")
+        elif key[:2] == ["company", "directors"] and isinstance(data, list):
+            out["people"] = [{"name": f"{p.get('firstName', '')} {p.get('lastName', '')}".strip(), "role": p.get("role")}
+                             for p in data if p.get("isCurrent")]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # News (Google News RSS search)
 # ---------------------------------------------------------------------------
@@ -218,7 +261,8 @@ def profile(f: Fetcher, lst: Listing) -> dict | None:
 # Archive
 # ---------------------------------------------------------------------------
 
-EMPTY = {"announcements": [], "news": [], "shorts": [], "profiles": {}, "coverage": []}
+EMPTY = {"announcements": [], "news": [], "shorts": [], "nzx_dividends": [], "profiles": {}, "companies": {},
+         "coverage": []}
 
 
 def merge(old: dict | None, new: dict, today: date | None = None) -> dict:
@@ -228,12 +272,13 @@ def merge(old: dict | None, new: dict, today: date | None = None) -> dict:
     cutoff = (today - timedelta(days=KEEP_DAYS)).isoformat()
     out = {k: (json.loads(json.dumps(v)) if isinstance(v, (list, dict)) else v) for k, v in EMPTY.items()}
     old = old or {}
-    for kind in ("announcements", "news", "shorts"):
+    for kind in ("announcements", "news", "shorts", "nzx_dividends"):
         rows = {r["id"]: r for r in old.get(kind, [])}
         rows.update({r["id"]: r for r in new.get(kind, [])})
         out[kind] = sorted((r for r in rows.values() if r.get("date", "") >= cutoff),
                            key=lambda r: (r.get("date", ""), r["id"]), reverse=True)
     out["profiles"] = {**(old.get("profiles") or {}), **(new.get("profiles") or {})}
+    out["companies"] = {**(old.get("companies") or {}), **(new.get("companies") or {})}
     out["coverage"] = (new.get("coverage") or []) + (old.get("coverage") or [])[:200]
     return out
 
@@ -242,7 +287,8 @@ def collect(listings: list[Listing], fetcher: Fetcher, previous: dict | None = N
             feeds: tuple[str, ...] = ("asx", "nzx", "news", "shorts", "profiles"), log=print) -> dict:
     """Fetch every feed, merge with the previous archive, and record what worked."""
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    new: dict[str, Any] = {"announcements": [], "news": [], "shorts": [], "profiles": {}, "coverage": []}
+    new: dict[str, Any] = {"announcements": [], "news": [], "shorts": [], "nzx_dividends": [], "profiles": {},
+                           "companies": {}, "coverage": []}
     companies = {}
     for lst in listings:
         companies.setdefault(lst.company_id, lst)   # news and profiles once per company
@@ -267,6 +313,19 @@ def collect(listings: list[Listing], fetcher: Fetcher, previous: dict | None = N
         r = nzx_announcements(fetcher, listings)
         new["announcements"] += r or []
         note("NZX announcements", 1 if r is not None else 0, 0 if r is not None else 1, len(r or []))
+    if "nzx" in feeds:
+        ok = bad = 0
+        for lst in listings:
+            if lst.exchange != "NZX":
+                continue
+            c = nzx_company(fetcher, lst)
+            if c is None:
+                bad += 1
+                continue
+            ok += 1
+            new["nzx_dividends"] += c.pop("dividends")
+            new["companies"][lst.company_id] = c
+        note("NZX company pages", ok, bad, len(new["nzx_dividends"]))
     if "news" in feeds:
         ok = bad = 0
         for lst in companies.values():

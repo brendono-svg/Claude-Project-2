@@ -11,8 +11,8 @@ marginal_tax_rate: 0.33
 top_n: 10
 weights: balanced
 filters:
-  min_market_cap_nzd: 500000000
-  min_traded_value_nzd: 200000
+  min_market_cap_nzd: 150000000
+  min_traded_value_nzd: 30000
 research:
   history_dir: my-data/live-history
   archive: my-data/publish/archive.json   # announcements, news, short interest (scripts/refresh_live.py)

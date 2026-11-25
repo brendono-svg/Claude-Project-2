@@ -377,6 +377,9 @@ def open_source(cfg: dict) -> DataSource:
             y.symbols.setdefault(lst.company_id, lst.ticker)
         src = _PreferCsvFundamentals(y, csv_src)
         src.listings = {lst.ticker: lst for lst in csv_src.universe()}
+        arch = (cfg.get("research") or {}).get("archive")
+        if arch and Path(arch).exists():
+            src.load_imputation(json.loads(Path(arch).read_text(encoding="utf-8")))
         return src
     return csv_src
 
@@ -397,6 +400,14 @@ class _PreferCsvFundamentals(LayeredSource):
         `credit_pct` where you've given one (left unknown otherwise, and flagged)."""
         divs = super().dividends(ticker)
         lst = getattr(self, "listings", {}).get(ticker)
+        nzx = getattr(self, "imputation", {}).get(lst.company_id if lst else ticker, [])
+        if nzx and lst is not None and lst.domicile == "NZ":
+            # NZX's own record of each dividend's imputation credits, matched on the record date.
+            filled = []
+            for d in divs:
+                m = next((pct for rec, pct in nzx if pct is not None and -3 <= (rec - d.ex_date).days <= 10), None)
+                filled.append(replace(d, imputed_pct=m) if m is not None and d.imputed_pct is None else d)
+            divs = filled
         if lst is None or lst.credit_pct is None:
             return divs
         out = []
@@ -407,3 +418,12 @@ class _PreferCsvFundamentals(LayeredSource):
                 d = replace(d, franked_pct=lst.credit_pct)   # trans-Tasman NZ credits stay unknown (flagged)
             out.append(d)
         return out
+
+    def load_imputation(self, archive: dict) -> None:
+        by_company: dict[str, list] = {}
+        tick = getattr(self, "listings", {})
+        for r in archive.get("nzx_dividends", []):
+            lst = tick.get(r["ticker"])
+            cid = lst.company_id if lst else r["ticker"]
+            by_company.setdefault(cid, []).append((date.fromisoformat(r["date"]), r.get("imputed_pct")))
+        self.imputation = by_company

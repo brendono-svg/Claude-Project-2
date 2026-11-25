@@ -760,3 +760,20 @@ def test_f_score_and_detail_tables(sample):
     assert any(r.startswith("| 1 year |") for r in perf)
     divs = detail.dividend_history(src.dividends("KAU.NZ"), ON, "NZD")
     assert "Paid in each of the last" in divs[-1]
+
+
+def test_nzx_company_page_gives_imputation_and_people(tmp_path):
+    page = ('<script id="__NEXT_DATA__" type="application/json">' + json.dumps({"props": {"pageProps": {"dehydratedState": {"queries": [
+        {"queryKey": ["instrument", "pastDividends", "X"], "state": {"data": [
+            {"id": 1, "type": "INT", "recordDate": 1701774000, "amount": "18.0", "currencyCode": "NZD",
+             "imputationCreditAmount": "0.07"},
+            {"id": 2, "type": "FIN", "recordDate": 1719403200, "amount": "20.0", "imputationCreditAmount": "0"}]}},
+        {"queryKey": ["company", "summary", "FPH000000"], "state": {"data": {"financialYearEnd": {"month": 3, "day": 31},
+                                                                          "firstListedDate": "1979-11-01T00:00:00+13:00"}}},
+        {"queryKey": ["company", "directors", "FPH000000"], "state": {"data": [
+            {"firstName": "A", "lastName": "B", "role": "Chair", "isCurrent": True},
+            {"firstName": "C", "lastName": "D", "role": "Director", "isCurrent": False}]}}]}}}}) + "</script>")
+    f = feeds.Fetcher(tmp_path, delay=0, opener=_FakeOpen({"instruments/FPH": page}))
+    c = feeds.nzx_company(f, Listing("FPH.NZ", "NZX", "FPH", "F"))
+    assert [d["imputed_pct"] for d in c["dividends"]] == [1.0, 0.0]          # 7c on 18c = fully imputed
+    assert c["year_end"] == "03-31" and c["people"] == [{"name": "A B", "role": "Chair"}]

@@ -221,6 +221,7 @@ class ResearchStore:
             s.dates, s.values = [p[0] for p in pts], [p[1] for p in pts]
         self._news: dict[str, list[Announcement]] = {}
         self.profiles: dict[str, dict] = {}
+        self.companies: dict[str, dict] = {}   # NZX company facts by company_id
         self.coverage: list[dict] = []
         jp = Path(journal) if journal else self.folder / "journal.yaml"
         self.journal: dict[str, JournalEntry] = load_journal(jp) if jp.exists() else {}
@@ -265,6 +266,7 @@ class ResearchStore:
             pts = sorted(set(zip(s.dates, s.values)))
             s.dates, s.values = [x[0] for x in pts], [x[1] for x in pts]
         self.profiles.update(archive.get("profiles") or {})
+        self.companies.update(archive.get("companies") or {})
         self.coverage = archive.get("coverage") or []
 
     def short_trend(self, ticker: str, on: date) -> tuple[float | None, float | None]:

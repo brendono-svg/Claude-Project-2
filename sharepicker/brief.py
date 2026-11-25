@@ -84,6 +84,14 @@ def render_brief(res: ScreenResult, ticker: str, ctx: Context, for_claude: bool 
     if prof.get("name") or prof.get("industry"):
         a(f"**{prof.get('name') or lst.name}** · {prof.get('industry') or lst.sector}")
         a("")
+    comp = (ctx.store.companies.get(lst.company_id) if ctx.store else None) or {}
+    facts_line = [x for x in (
+        f"listed since {comp['first_listed'][:4]}" if comp.get("first_listed") else "",
+        f"year end {comp['year_end']}" if comp.get("year_end") else "",
+        f"auditor {comp['auditor']}" if comp.get("auditor") else "") if x]
+    if facts_line:
+        a(" · ".join(facts_line).capitalize())
+        a("")
     a(f"{lst.exchange} · {lst.sector} · {lst.domicile}-resident · price {lst.currency} {_n(s.price, 2)} · "
       f"market cap NZ{_money(s.market_cap_nzd)}" + (f" · also listed as {', '.join(other)}" if other else ""))
     a("")
@@ -222,6 +230,13 @@ def render_brief(res: ScreenResult, ticker: str, ctx: Context, for_claude: bool 
             a(f"- {x.date:%d %b}: {head}{' – ' + x.publisher if x.publisher else ''}{tag}")
         a("")
         a("Headlines from Google News; open them for the full story. Media and broker views are opinions.")
+        a("")
+    people = comp.get("people") or []
+    if people:
+        a("## Board and management (NZX)")
+        a("")
+        for x in people[:12]:
+            a(f"- {x['name']}: {x['role']}")
         a("")
     a("## Numbers")
     a("")
