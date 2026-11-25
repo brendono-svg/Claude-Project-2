@@ -78,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--top", type=int)
     sc.add_argument("--as-of")
     sc.add_argument("--save", action="store_true", help="Save this screen to the history folder (the tool's memory)")
+    sc.add_argument("--with-briefs", action="store_true",
+                    help="Put every share's brief and the digest in the JSON, for the app's Briefs and Digest tabs")
 
     br = sub.add_parser("brief", help="Research file for one share: checklist, thesis, results, announcements, sources")
     br.add_argument("config")
@@ -209,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         data = screen_json(res)
         add_research_json(data, res, ctx)
+        if args.with_briefs:
+            add_briefs_json(data, res, ctx, hist_dir, float(cfg.get("marginal_tax_rate", 0.33)))
         _out(dumps(data), args.json)
     if args.save:
         print(f"Saved {save_history(res, hist_dir)}", file=sys.stderr)
@@ -315,3 +319,22 @@ def _capture(args) -> int:
                     "price_sensitive": 1 if args.sensitive else ""})
     print(f"Logged in {path} as: {classify(args.headline)[0]}")
     return 0
+
+
+def add_briefs_json(data: dict, res, ctx: Context, hist_dir: str, rate: float = 0.33) -> None:
+    """Rendered briefs (plus the paste-ready Claude prompt) and the digest, as HTML for the app."""
+    import re
+
+    from .mdhtml import to_html
+    from .report import DISCLAIMER
+
+    def strip(md: str) -> str:   # the app shows the disclaimer once, in its footer
+        return md.replace(DISCLAIMER, "")
+    briefs = {}
+    for r in res.ranked:
+        md = render_brief(res, r.ticker, ctx, for_claude=True, marginal_rate=rate) or ""
+        body, _, pack = md.partition("## Prompt to paste into Claude")
+        m = re.search(r"```text\n(.*?)\n```", pack, re.S)
+        briefs[r.ticker] = {"html": to_html(strip(body)), "prompt": m.group(1) if m else ""}
+    data["briefs"] = briefs
+    data["digest_html"] = to_html(strip(render_digest(res, ctx, hist_dir)))

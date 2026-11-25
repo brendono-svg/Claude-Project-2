@@ -117,7 +117,10 @@ straight after `sample-data`.
   FIF position, concentration by share, sector and country, FIF headroom per person, and how much
   room the kiwiwealth satellite has left. It then suggests high-ranked shares that fit your limits,
   or swaps for your lowest-ranked holdings when the satellite is full.
-- **app/sharepicker.html** opens the `--json` output on a phone or desktop. You can move the
+- **app/sharepicker.html** opens straight into the fictional demo, with three tabs: Screen, Changes and Briefs.
+  Each brief has a "Copy Claude prompt" button. To see your own data, run
+  `screen ... --json screen.json --with-briefs` and choose "Load your own screen". The page
+  opens the `--json` output on a phone or desktop. You can move the
   factor weights and watch the ranking change, filter (NZX/ASX, sector, no red flags, pays
   dividends, not FIF) and open any share for its full breakdown. "Try the fictional demo" works offline.
 

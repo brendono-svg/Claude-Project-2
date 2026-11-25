@@ -579,3 +579,21 @@ def test_results_date_notice_does_not_hide_upcoming_release(tmp_path):
     store = rsch.ResearchStore(tmp_path)
     nr = rsch.next_results(Listing("X.NZ", "NZX", "X", "X", balance_date="06-30"), [], store, date(2026, 7, 20))
     assert nr["date"] == date(2026, 8, 29)
+
+
+def test_mdhtml_escapes_and_renders():
+    from sharepicker.mdhtml import to_html
+    h = to_html("# T <x>\n\n- **a** `b` [l](https://e.nz)\n- [bad](javascript:alert(1))\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```text\n<p>\n```\n> q")
+    assert "<h1>T &lt;x&gt;</h1>" in h and "<strong>a</strong>" in h and "<code>b</code>" in h
+    assert 'href="https://e.nz"' in h and "javascript" not in h
+    assert "<td>1</td>" in h and "&lt;p&gt;" in h and "<blockquote>q</blockquote>" in h
+
+
+def test_screen_json_with_briefs(sample, tmp_path):
+    cfg = tmp_path / "s.yaml"
+    cfg.write_text(f"data: {{folder: '{sample}'}}\nresearch: {{history_dir: '{tmp_path / 'h'}'}}\n")
+    js = tmp_path / "s.json"
+    assert main(["screen", str(cfg), "--as-of", "2026-11-20", "--json", str(js), "--with-briefs", "-o", str(tmp_path / "x.md")]) == 0
+    d = json.loads(js.read_text())
+    assert "KOA.AX" in d["briefs"] and "I'm a New Zealand-resident" in d["briefs"]["KOA.AX"]["prompt"]
+    assert "<h1>" in d["digest_html"] and "not regulated financial advice" not in d["briefs"]["KOA.AX"]["html"]

@@ -14,7 +14,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sharepicker.cli import add_research_json, research_context  # noqa: E402
+from sharepicker.cli import add_briefs_json, add_research_json, research_context  # noqa: E402
+from sharepicker.research import save_history  # noqa: E402
 from sharepicker.data import CsvSource  # noqa: E402
 from sharepicker.report import dumps, screen_json  # noqa: E402
 from sharepicker.sample import generate  # noqa: E402
@@ -40,8 +41,14 @@ def main() -> int:
         src = CsvSource(folder)
         res = run_screen(cfg, src, AS_OF)
         data = screen_json(res)
-        ctx, _ = research_context(cfg, src, AS_OF)
+        # Save a few earlier screens so the demo digest and score history have something to show.
+        hist = Path(tmp) / "history"
+        cfg["research"] = {"history_dir": str(hist)}
+        for d in (date(2026, 8, 31), date(2026, 9, 30), date(2026, 10, 30)):
+            save_history(run_screen(cfg, src, d), hist)
+        ctx, hist_dir = research_context(cfg, src, AS_OF)
         add_research_json(data, res, ctx)
+        add_briefs_json(data, res, ctx, hist_dir)
         data = _round(json.loads(dumps(data)))
     data["source"] = "fictional sample data"
     blob = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
