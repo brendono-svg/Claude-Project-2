@@ -103,7 +103,8 @@ def score(snaps: list[Snapshot], weights: str | dict | None = None) -> list[Scor
         got = expected = 0
         for g in GROUPS:
             vals = [v for k, v in r.metric_scores.items() if METRICS[k][0] == g and v is not None]
-            n = sum(1 for k in METRICS if METRICS[k][0] == g)
+            # Metrics that don't apply to this kind of company don't count against its confidence.
+            n = sum(1 for k in METRICS if METRICS[k][0] == g and k not in r.snap.not_applicable) or 1
             if w.get(g, 0) > 0:
                 got += len(vals) * w[g] / n
                 expected += w[g]

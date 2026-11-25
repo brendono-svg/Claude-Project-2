@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
@@ -99,7 +100,9 @@ class CsvSource:
                 franking_account=_b(r.get("franking_account")),
                 all_ords_from=_d(r.get("all_ords_from")), all_ords_to=_d(r.get("all_ords_to")),
                 listed_from=_d(r.get("listed_from")), listed_to=_d(r.get("listed_to")),
-                balance_date=(r.get("balance_date") or "").strip(), source=self.name))
+                balance_date=(r.get("balance_date") or "").strip(), credit_pct=_f(r.get("credit_pct")),
+                units_per_share=_f(r.get("units_per_share")) or 1.0,
+                source=self.name))
         return out
 
     def _load_prices(self) -> dict[str, Series]:
@@ -184,29 +187,34 @@ class YahooSource:
         self.errors: dict[str, str] = {}
         self._open = opener or urllib.request.urlopen
         self._mem: dict[str, dict] = {}
+        self._funds: dict[str, list[Fundamentals]] = {}
+        self.symbols: dict[str, str] = {}   # company_id -> ticker for fundamentals (set by open_source)
+        self.reporting_lag_months = 3
+
+    def _get(self, url: str, cache_name: str, key: str) -> dict | None:
+        path = self.cache / cache_name
+        if path.exists() and (time.time() - path.stat().st_mtime) < self.cache_days * 86400:
+            return json.loads(path.read_text())
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (sharepicker)"})
+        try:
+            with self._open(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            self.errors[key] = str(e)
+            # Stale cache beats nothing; the report flags the data's age.
+            return json.loads(path.read_text()) if path.exists() else None
+        self.cache.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+        return data
 
     def _chart(self, symbol: str) -> dict | None:
         if symbol in self._mem:
             return self._mem[symbol]
-        path = self.cache / f"{symbol.replace('^', '_').replace('=', '_')}.json"
-        if path.exists() and (time.time() - path.stat().st_mtime) < self.cache_days * 86400:
-            data = json.loads(path.read_text())
-        else:
-            q = urllib.parse.urlencode({"range": f"{self.years}y", "interval": "1d", "events": "div,splits"})
-            req = urllib.request.Request(self.URL.format(sym=urllib.parse.quote(symbol), q=q),
-                                         headers={"User-Agent": "Mozilla/5.0 (sharepicker)"})
-            try:
-                with self._open(req, timeout=self.timeout) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-            except (urllib.error.URLError, OSError, ValueError) as e:
-                self.errors[symbol] = str(e)
-                if path.exists():  # stale cache beats nothing; the report flags its age
-                    data = json.loads(path.read_text())
-                else:
-                    return None
-            else:
-                self.cache.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps(data))
+        safe = symbol.replace('^', '_').replace('=', '_')
+        q = urllib.parse.urlencode({"range": f"{self.years}y", "interval": "1d", "events": "div,splits"})
+        data = self._get(self.URL.format(sym=urllib.parse.quote(symbol), q=q), f"{safe}.json", symbol)
+        if data is None:
+            return None
         try:
             result = data["chart"]["result"][0]
         except (KeyError, IndexError, TypeError):
@@ -246,8 +254,48 @@ class YahooSource:
         return sorted((Dividend(ticker, datetime.fromtimestamp(v["date"], timezone.utc).date(), float(v["amount"]),
                                 cur, source=self.name) for v in divs), key=lambda x: x.ex_date)
 
+    # Yahoo's annual statement series. Values are as restated today, not as first reported,
+    # so they suit a live screen but not a backtest (backtest.py leaves them out).
+    FUND_URL = "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/{sym}?{q}"
+    FUND_FIELDS = {"annualTotalRevenue": "revenue", "annualGrossProfit": "gross_profit", "annualEBIT": "ebit",
+                   "annualNetIncome": "net_income", "annualStockholdersEquity": "equity",
+                   "annualTotalDebt": "debt", "annualCashAndCashEquivalents": "cash",
+                   "annualInterestExpense": "interest_expense", "annualOperatingCashFlow": "operating_cash_flow",
+                   "annualCashFlowFromContinuingOperatingActivities": "operating_cash_flow",
+                   "annualCapitalExpenditure": "capex", "annualOrdinarySharesNumber": "shares_out"}
+
     def fundamentals(self, company_id: str) -> list[Fundamentals]:
-        return []
+        if company_id in self._funds:
+            return self._funds[company_id]
+        sym = self.symbols.get(company_id)
+        out: list[Fundamentals] = []
+        if sym:
+            q = urllib.parse.urlencode({"type": ",".join(self.FUND_FIELDS), "period1": 1262304000,
+                                        "period2": int(time.time()) + 86400})
+            data = self._get(self.FUND_URL.format(sym=urllib.parse.quote(sym), q=q),
+                             f"{sym.replace('^', '_')}.fundamentals.json", f"{sym} fundamentals")
+            out = self._parse_fundamentals(company_id, data)
+        self._funds[company_id] = out
+        return out
+
+    def _parse_fundamentals(self, company_id: str, data: dict | None) -> list[Fundamentals]:
+        rows: dict[date, dict] = {}
+        cur: dict[date, str] = {}
+        for res in ((data or {}).get("timeseries") or {}).get("result") or []:
+            kind = ((res.get("meta") or {}).get("type") or [None])[0]
+            field = self.FUND_FIELDS.get(kind)
+            for pt in res.get(kind) or []:
+                if not pt or "reportedValue" not in pt:
+                    continue
+                d = date.fromisoformat(pt["asOfDate"])
+                v = float(pt["reportedValue"]["raw"])
+                if field == "capex":
+                    v = abs(v)          # Yahoo reports spending as a negative cash flow
+                rows.setdefault(d, {}).setdefault(field, v)
+                cur[d] = pt.get("currencyCode") or cur.get(d, "NZD")
+        return [Fundamentals(company_id, d, add_months(d, self.reporting_lag_months), cur.get(d, "NZD"),
+                             source="yahoo (restated)", **vals)
+                for d, vals in sorted(rows.items()) if vals.get("net_income") is not None or vals.get("revenue") is not None]
 
     def fx(self, pair: str) -> Series:
         s = self.prices(f"{pair.upper()}=X")
@@ -307,10 +355,39 @@ def open_source(cfg: dict) -> DataSource:
     if d.get("source", "csv") == "yahoo":
         y = YahooSource(d.get("cache_dir", str(Path(folder) / "cache")), float(d.get("cache_days", 1)),
                         int(d.get("years", 10)))
-        return LayeredSource(y, csv_src)
+        y.reporting_lag_months = lag
+        # Statements come per company: fetch them with the first listing in listings.csv.
+        for lst in csv_src.universe():
+            y.symbols.setdefault(lst.company_id, lst.ticker)
+        src = _PreferCsvFundamentals(y, csv_src)
+        src.listings = {lst.ticker: lst for lst in csv_src.universe()}
+        return src
     return csv_src
 
 
 def staleness(last: date | None, as_of: date) -> int | None:
     return None if last is None else (as_of - last).days
 
+
+class _PreferCsvFundamentals(LayeredSource):
+    """Yahoo for prices, dividends and FX; your CSV statements first, Yahoo's as the fallback."""
+
+    def fundamentals(self, company_id: str) -> list[Fundamentals]:
+        y, c = self.sources
+        return c.fundamentals(company_id) or y.fundamentals(company_id)
+
+    def dividends(self, ticker: str) -> list[Dividend]:
+        """Yahoo dividends carry no imputation or franking: fill in the listing's typical
+        `credit_pct` where you've given one (left unknown otherwise, and flagged)."""
+        divs = super().dividends(ticker)
+        lst = getattr(self, "listings", {}).get(ticker)
+        if lst is None or lst.credit_pct is None:
+            return divs
+        out = []
+        for d in divs:
+            if lst.domicile == "NZ" and d.imputed_pct is None:
+                d = replace(d, imputed_pct=lst.credit_pct)
+            elif lst.domicile == "AU" and d.franked_pct is None:
+                d = replace(d, franked_pct=lst.credit_pct, nz_credit_pct=d.nz_credit_pct or 0.0)
+            out.append(d)
+        return out

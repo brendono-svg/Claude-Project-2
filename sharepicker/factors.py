@@ -40,6 +40,13 @@ METRICS: dict[str, tuple[str, bool, str]] = {
 }
 GROUPS = ("value", "quality", "growth", "momentum", "income", "risk")
 
+# Banks and insurers: deposits and policy funds look like "debt", and they have no EBIT or
+# gross margin in the usual sense. These metrics are left out for them (not scored as weak),
+# so they are judged on earnings yield, book value, ROE, consistency, growth and income.
+FINANCIAL_SECTORS = {"financials", "banks", "insurance"}
+NOT_FOR_FINANCIALS = {"ebit_ev", "fcf_yield", "roic", "margin_stability", "debt_to_equity",
+                      "interest_cover", "fcf_cover"}
+
 
 class FX:
     """Converts between NZD and AUD (and anything else with a `<FROM><TO>` series)."""
@@ -76,6 +83,7 @@ class Snapshot:
     metrics: dict[str, float | None] = field(default_factory=dict)
     facts: dict[str, Any] = field(default_factory=dict)  # extra context for flags and the report
     missing: list[str] = field(default_factory=list)
+    not_applicable: set[str] = field(default_factory=set)   # metrics that don't fit this kind of company
 
 
 def _cagr(first: float | None, last: float | None, years: float) -> float | None:
@@ -165,16 +173,22 @@ def snapshot(listing: Listing, source: DataSource, as_of: date, fx: FX,
         snap.facts["fundamentals_age_days"] = (as_of - f.period_end).days
         snap.facts["fundamentals_source"] = f.source
         rep_rate = fx.rate(cur, f.currency, as_of) if price is not None else None
-        mcap = price * rep_rate * f.shares_out if price is not None and rep_rate and f.shares_out else None
+        # Price is per listed unit; statements count shares (CDIs can be a fraction of a share).
+        mcap = (price * listing.units_per_share * rep_rate * f.shares_out
+                if price is not None and rep_rate and f.shares_out else None)
         nzd = fx.rate(f.currency, "NZD", as_of)
         snap.market_cap_nzd = mcap * nzd if mcap and nzd else None
         _value_quality(m, snap.facts, funds, mcap)
+        if listing.sector.lower() in FINANCIAL_SECTORS:
+            snap.not_applicable = set(NOT_FOR_FINANCIALS)
 
     # --- dividends ---------------------------------------------------------
     _income(snap, source, funds, fx, marginal_rate)
 
     for k in METRICS:
         m.setdefault(k, None)
+    for k in snap.not_applicable:
+        m[k] = None
     return snap
 
 
@@ -247,7 +261,7 @@ def _income(snap: Snapshot, source: DataSource, funds: list[Fundamentals], fx: F
     if funds and cash > 0:
         f = funds[-1]
         to_rep = fx.rate(lst.currency, f.currency, d) or 1.0
-        dps = cash * to_rep
+        dps = cash * to_rep * lst.units_per_share   # per share, like EPS
         # Capped at 5x: beyond that, more cover says nothing more about the dividend's safety.
         if f.eps is not None:
             m["dividend_cover"] = min(f.eps / dps, 5.0)

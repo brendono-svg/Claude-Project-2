@@ -124,6 +124,30 @@ straight after `sample-data`.
   factor weights and watch the ranking change, filter (NZX/ASX, sector, no red flags, pays
   dividends, not FIF) and open any share for its full breakdown. "Try the fictional demo" works offline.
 
+### Live NZX/ASX data
+
+`examples/live/` lists about 45 real large caps (NZX, ASX, dual listings, Xero as an NZ company,
+ResMed as a US company traded as CDIs, two stapled groups). With network access to
+`query1.finance.yahoo.com`:
+
+```bash
+python scripts/refresh_live.py                      # -> my-data/publish/screen.json (with briefs and digest)
+python -m sharepicker screen examples/live/screen.yaml
+```
+
+- Yahoo supplies prices, volumes, dividends, AUD/NZD and four years of **annual accounts**
+  (revenue, profit, EBIT, equity, debt, cash, cash flow, capex, shares). The accounts are as restated
+  today, so they are used for the live screen only. Backtests leave them out to avoid look-ahead.
+  Your own `fundamentals.csv` takes priority when you have one.
+- **Banks and insurers** (`sector: Financials`) aren't scored on debt/equity, EBIT/EV, ROIC,
+  interest cover, gross margins or free cash flow, because deposits and policy funds distort those. Missing those
+  metrics doesn't lower their confidence label.
+- Yahoo has no franking or imputation figures. `credit_pct` in `listings.csv` sets a share's usual
+  level (filled in only for companies known to pay fully franked dividends). Otherwise the share is
+  flagged and its after-tax yield is a lower bound. `units_per_share` handles CDIs (ResMed: 10).
+- The Sharepicker page loads `screen.json` published beside it, and can switch between live data, the
+  fictional demo and your own file. Republish both with the same artifact URL to refresh it.
+
 ### Research layer: results, announcements, your thesis
 
 Borrowing the useful parts of AI trading-bot designs (news relevance scoring, independent

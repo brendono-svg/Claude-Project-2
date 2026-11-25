@@ -597,3 +597,45 @@ def test_screen_json_with_briefs(sample, tmp_path):
     d = json.loads(js.read_text())
     assert "KOA.AX" in d["briefs"] and "I'm a New Zealand-resident" in d["briefs"]["KOA.AX"]["prompt"]
     assert "<h1>" in d["digest_html"] and "not regulated financial advice" not in d["briefs"]["KOA.AX"]["html"]
+
+
+def test_yahoo_fundamentals_parse_and_cache(tmp_path):
+    payload = {"timeseries": {"result": [
+        {"meta": {"type": ["annualNetIncome"]}, "annualNetIncome": [
+            {"asOfDate": "2025-06-30", "currencyCode": "AUD", "reportedValue": {"raw": 100.0}}, None]},
+        {"meta": {"type": ["annualCapitalExpenditure"]}, "annualCapitalExpenditure": [
+            {"asOfDate": "2025-06-30", "currencyCode": "AUD", "reportedValue": {"raw": -20.0}}]},
+        {"meta": {"type": ["annualOrdinarySharesNumber"]}, "annualOrdinarySharesNumber": [
+            {"asOfDate": "2025-06-30", "currencyCode": "AUD", "reportedValue": {"raw": 50.0}}]}]}}
+
+    class Resp:
+        def read(self):
+            return json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    y = YahooSource(tmp_path, opener=lambda req, timeout: Resp())
+    y.symbols["CBA"] = "CBA.AX"
+    f = y.fundamentals("CBA")
+    assert len(f) == 1 and f[0].net_income == 100 and f[0].capex == 20 and f[0].currency == "AUD"
+    assert f[0].available_date == date(2025, 9, 30) and "restated" in f[0].source
+    assert y.fundamentals("UNKNOWN") == []
+
+
+def test_financials_skip_debt_metrics_without_losing_confidence():
+    src, lst = _one_company()
+    lst.sector = "Financials"
+    s = snapshot(lst, src, ON, FX(src))
+    assert s.metrics["debt_to_equity"] is None and s.metrics["interest_cover"] is None
+    assert s.metrics["roe"] is not None and "debt_to_equity" in s.not_applicable
+    assert score([s])[0].confidence == "high"
+
+
+def test_backtest_drops_restated_statements(sample):
+    from sharepicker.backtest import _AsReported
+    src = _AsReported(CsvSource(sample))
+    assert src.fundamentals("KAU") and not src.dropped     # CSV statements are kept

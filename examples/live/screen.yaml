@@ -1,0 +1,18 @@
+# Real NZX/ASX large caps with live Yahoo data (prices, dividends, AUD/NZD and restated annual
+# statements). Needs network access to query1.finance.yahoo.com.
+#   python -m sharepicker screen examples/live/screen.yaml --save --json my-data/live.json --with-briefs
+# Or let scripts/refresh_live.py do it.
+data:
+  source: yahoo
+  folder: examples/live          # listings.csv (+ optional announcements/events/journal you add)
+  cache_dir: my-data/cache/yahoo
+  cache_days: 0.5
+marginal_tax_rate: 0.33
+top_n: 10
+weights: balanced
+filters:
+  min_market_cap_nzd: 500000000
+  min_traded_value_nzd: 200000
+research:
+  history_dir: my-data/live-history
+  journal: my-data/journal.yaml   # your own theses (create it; see README)

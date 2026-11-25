@@ -22,6 +22,8 @@ class Listing:
     listed_from: date | None = None
     listed_to: date | None = None       # set for delisted shares (avoids survivorship bias)
     balance_date: str = ""              # "MM-DD" financial year end, e.g. "03-31"; for the results calendar
+    units_per_share: float = 1.0        # e.g. 10 for ResMed: 10 ASX CDIs = 1 US share
+    credit_pct: float | None = None     # typical imputation (NZ) or franking (AU) share, used when a dividend has none
     source: str = "csv"
 
     def listed_on(self, d: date) -> bool:

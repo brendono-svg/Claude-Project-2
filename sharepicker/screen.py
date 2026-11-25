@@ -140,7 +140,7 @@ def flags_for(r: Scored, as_of: date, stale_days: int = 10) -> list[tuple[str, s
         red(f"Low interest cover ({ic:.1f}x): sensitive to higher rates")
     if f.get("negative_equity"):
         red("Negative shareholders' equity")
-    if f.get("fcf") is not None and f["fcf"] < 0:
+    if f.get("fcf") is not None and f["fcf"] < 0 and "fcf_yield" not in s.not_applicable:
         red("Negative free cash flow in the latest year")
     g = f.get("share_count_growth")
     if g is not None and g > 0.05:

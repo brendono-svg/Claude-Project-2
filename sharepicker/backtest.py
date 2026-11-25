@@ -77,6 +77,7 @@ def run_backtest(cfg: dict, source: DataSource, start: date, end: date) -> Backt
     brokers = cfg.get("brokers")
     marginal = float(cfg.get("marginal_tax_rate", 0.33))
     res = BacktestResult(start, end, top_n)
+    source = _AsReported(source)
 
     fx = FX(source)
     bench_names = {**DEFAULT_BENCHMARKS, **(cfg.get("benchmarks") or {})}
@@ -152,7 +153,27 @@ def run_backtest(cfg: dict, source: DataSource, start: date, end: date) -> Backt
                                     for x in zip(*res.bench.values())]
     if not any(lst.listed_to for lst in universe):
         res.warnings.append("No delisted shares in the data: survivorship bias flatters these results.")
+    if source.dropped:
+        res.warnings.append("Restated (Yahoo) financial statements were left out to avoid look-ahead, so "
+                            "value, quality and growth are not part of this backtest.")
     res.warnings.append("Benchmarks are the index series supplied; if they are price indexes (no dividends), "
                         "the comparison favours the strategy.")
     return res
 
+
+class _AsReported:
+    """Hides statements that are restated (Yahoo's), which would leak later corrections
+    into past rebalances. Supply as-reported figures in fundamentals.csv to backtest value
+    and quality."""
+
+    def __init__(self, src):
+        self.src, self.name, self.dropped = src, src.name, False
+
+    def __getattr__(self, item):
+        return getattr(self.src, item)
+
+    def fundamentals(self, company_id):
+        f = self.src.fundamentals(company_id)
+        kept = [x for x in f if "restated" not in (x.source or "")]
+        self.dropped = self.dropped or len(kept) < len(f)
+        return kept

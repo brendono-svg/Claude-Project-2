@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>Sharepicker</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -117,12 +118,21 @@ footer { font-size: 0.78rem; color: var(--muted); }
   <header style="display:grid;gap:4px">
     <span class="eyebrow">NZX · ASX share screen</span>
     <h1>Sharepicker</h1>
-    <p class="muted small" id="subtitle">Open the JSON from <code>python -m sharepicker screen … --json</code>.</p>
+    <p class="muted small" id="subtitle">Loading…</p>
+    <div class="row small">
+      <label for="dataSrc" class="muted">Data</label>
+      <select id="dataSrc">
+        <option value="live">Live NZX/ASX</option>
+        <option value="demo">Fictional demo</option>
+        <option value="file">Your own file…</option>
+      </select>
+    </div>
   </header>
+  <p class="note small" id="liveNote" hidden></p>
 
   <div class="note demobar" id="demoBar" hidden>
     <span><strong>Fictional demo.</strong> None of these companies exist; the numbers are generated to show what the tool does.</span>
-    <button class="btn ghost" id="showLoader">Load your own screen</button>
+    <button class="btn ghost" id="showLoader">Switch to live data</button>
   </div>
 
   <section class="card drop" id="drop" hidden>
@@ -231,7 +241,7 @@ function load(json, remember = true) {
   $("err").hidden = true;
   data = d;
   weights = { ...PRESETS.balanced, ...(d.weights || {}) };
-  if (remember) store.set("sharepicker:last", JSON.stringify(d));
+  if (remember) { store.set("sharepicker:last", JSON.stringify(d)); store.set("sharepicker:src", "file"); $("dataSrc").value = "file"; $("liveNote").hidden = true; }
   $("drop").hidden = true; $("app").hidden = false;
   $("subtitle").textContent = `Screen as at ${d.as_of} · ${d.shares.length} companies · ${d.source}`;
   $("warnings").innerHTML = (d.warnings || []).map(w => `<p class="warn">⚠️ ${esc(w)}</p>`).join("");
@@ -246,6 +256,27 @@ function load(json, remember = true) {
   drawWeights(); draw();
   showTab((location.hash || "#screen").slice(1));
 }
+
+// Data sources: the live screen published beside this page (screen.json), the demo embedded
+// below, or a file you open. Only the choice is remembered, never the data's origin.
+async function loadLive() {
+  try {
+    const r = await fetch("screen.json", { cache: "no-cache" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    load(d, false);
+    $("dataSrc").value = "live";
+    $("liveNote").textContent = `Live data: ${d.source}. Prices, dividends and annual accounts come from Yahoo Finance (accounts as restated, not as first reported). Franking and imputation are known only where listed; company announcements aren't included yet.`;
+    $("liveNote").hidden = false;
+    return true;
+  } catch (e) {
+    loadDemo();
+    $("liveNote").textContent = "Live data isn't available here (it's published with the online page), so this is the fictional demo.";
+    $("liveNote").hidden = false;
+    return false;
+  }
+}
+function loadDemo() { load(document.getElementById("demo-data").textContent, false); $("dataSrc").value = "demo"; $("liveNote").hidden = true; }
 
 function fail(msg) { $("drop").hidden = false; $("err").textContent = msg; $("err").hidden = false; }
 
@@ -368,11 +399,23 @@ $("copyPrompt").addEventListener("click", () => {
   if (!navigator.clipboard) return shown();
   navigator.clipboard.writeText(text).then(() => { $("copyStatus").textContent = "Copied. Paste it into Claude."; }, shown);
 });
-$("showLoader").addEventListener("click", () => { $("drop").hidden = false; $("drop").scrollIntoView({ behavior: "smooth" }); });
+$("showLoader").addEventListener("click", () => { store.set("sharepicker:src", "live"); loadLive(); });
+$("dataSrc").addEventListener("change", e => {
+  const v = e.target.value;
+  store.set("sharepicker:src", v);
+  $("drop").hidden = v !== "file";
+  if (v === "live") loadLive();
+  else if (v === "demo") loadDemo();
+  else {
+    const last = store.get("sharepicker:last");
+    if (last) load(last, false);
+    $("drop").scrollIntoView({ behavior: "smooth" });
+  }
+});
 window.addEventListener("hashchange", () => data && showTab(location.hash.slice(1)));
 $("file").addEventListener("change", async e => { const f = e.target.files[0]; if (f) load(await f.text()); });
 $("pasteGo").addEventListener("click", () => load($("paste").value));
-$("demo").addEventListener("click", () => load(document.getElementById("demo-data").textContent, false));
+$("demo").addEventListener("click", () => { store.set("sharepicker:src", "demo"); $("drop").hidden = true; loadDemo(); });
 const drop = $("drop");
 drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
@@ -380,8 +423,11 @@ drop.addEventListener("drop", async e => { e.preventDefault(); drop.classList.re
 // Open in a working state: your last loaded screen, or the fictional demo.
 // The demo data sits after this script, so wait for the whole document.
 document.addEventListener("DOMContentLoaded", () => {
+  const pref = store.get("sharepicker:src") || "live";
   const last = store.get("sharepicker:last");
-  load(last || document.getElementById("demo-data").textContent, false);
+  if (pref === "file" && last) { load(last, false); $("dataSrc").value = "file"; }
+  else if (pref === "demo") loadDemo();
+  else loadLive();
 });
 </script>
 <!-- DEMO-DATA: written by scripts/build_sharepicker_demo.py from the FICTIONAL sample universe -->
