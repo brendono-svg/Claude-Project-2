@@ -35,6 +35,10 @@ from .models import Fundamentals, Listing, Series
 
 # (category, pattern, base relevance). First match wins, so specific patterns come first.
 CATEGORIES: list[tuple[str, str, float]] = [
+    # Meeting outcomes and results-date notices mention "results" but are not results releases.
+    ("agm", r"results? of (the )?(annual|special|general|shareholders'?)? ?(general )?(meeting|agm|asm)", 0.3),
+    ("results_notice", r"results? (date|briefing|webcast|call|presentation date|announcement date)|"
+                       r"notice of .*results|(date|timing) of .*results", 0.4),
     ("takeover", r"takeover|scheme (of arrangement|implementation)|indicative (proposal|offer)|non-binding|"
                  r"acquisition proposal|\bbid\b", 0.95),
     ("guidance_down", r"downgrade|profit warning|(lower|reduce|cut)[sd]? (its |full[- ]year |fy\d* )?(earnings |profit )?guidance|"
@@ -63,7 +67,7 @@ LABELS = {"takeover": "Takeover / scheme", "guidance_down": "Guidance cut", "gui
           "results": "Results", "guidance": "Guidance / outlook", "leadership": "Leadership change",
           "acquisition": "Acquisition / sale", "director_trade": "Director trade",
           "substantial_holder": "Substantial holder", "debt": "Debt / funding", "dividend": "Dividend",
-          "agm": "Meeting", "other": "Other"}
+          "agm": "Meeting", "results_notice": "Results date / briefing", "other": "Other"}
 
 
 def classify(headline: str) -> tuple[str, float]:
@@ -118,6 +122,8 @@ def price_reaction(stock: Series, index: Series | None, on: date) -> float | Non
     if i0 < 0 or j + 1 >= len(stock.dates):
         return None
     d0, d1 = stock.dates[i0], stock.dates[j + 1]
+    if (d1 - on).days > 7 or (on - d0).days > 7:
+        return None   # gap in the price data: no reliable reaction
     r = stock.values[j + 1] / stock.values[i0] - 1
     if index is not None and len(index):
         b0, b1 = index.on(d0, 5), index.on(d1, 5)
@@ -286,14 +292,16 @@ def next_results(listing: Listing, funds: list[Fundamentals], store: ResearchSto
     for a in past:
         # Match each past release to the nearest period end before it.
         cands = [latest] + [add_months(latest, -6 * k) for k in range(1, 12)] + _half_year_ends(latest)
-        before = [c for c in cands if c < a.date and (a.date - c).days <= 120]
+        before = [c for c in cands if c + timedelta(days=14) <= a.date and (a.date - c).days <= 100]
         if before:
             lags.append((a.date - max(before)).days)
     for pe in [latest] + _half_year_ends(latest):
         deadline = mr.results_deadline(pe, listing.exchange)
         if deadline < as_of:
             continue
-        if any(a.date > pe for a in past):
+        # Reported only if a release falls in this period's window, so a stray mention of
+        # "results" just after the balance date doesn't hide the real release.
+        if any(pe + timedelta(days=14) <= a.date <= deadline + timedelta(days=30) for a in past):
             continue  # this period has already been reported
         kind = "full-year" if pe.month == latest.month else "half-year"
         if lags:

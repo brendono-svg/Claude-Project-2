@@ -5,7 +5,7 @@ Both are built from local data only. `--for-claude` adds a prompt you can paste 
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
 
@@ -37,11 +37,11 @@ def announcements_with_reactions(ctx: Context, ticker: str, exchange: str, as_of
     for a in ctx.store.announcements(ticker, as_of):
         if (as_of - a.date).days > days:
             continue
-        a.reaction = price_reaction(stock.until(as_of), index, a.date)
+        # Work on a copy: the store keeps base relevance, so repeated calls give the same answer.
+        reaction = price_reaction(stock.until(as_of), index, a.date)
         bump = 0.1 if a.price_sensitive else 0.0
-        bump += min(0.2, abs(a.reaction) * 2) if a.reaction is not None else 0.0
-        a.relevance = min(1.0, a.relevance + bump)
-        out.append(a)
+        bump += min(0.2, abs(reaction) * 2) if reaction is not None else 0.0
+        out.append(replace(a, reaction=reaction, relevance=min(1.0, a.relevance + bump)))
     return out
 
 

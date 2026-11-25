@@ -426,6 +426,9 @@ from sharepicker import research as rsch  # noqa: E402
     ("CEO resignation", "leadership"),
     ("Notice of annual general meeting", "agm"),
     ("Change of registry address", "other"),
+    ("Results of Annual Meeting", "agm"),
+    ("Notice of FY26 results date", "results_notice"),
+    ("Results briefing webcast details", "results_notice"),
 ])
 def test_classify_announcements(headline, cat):
     assert rsch.classify(headline)[0] == cat
@@ -558,3 +561,21 @@ def test_cli_note_and_announce(tmp_path):
     assert main(["announce", str(cfg), "FPH.NZ", "2026-11-26", "Investor day presentation"]) == 0
     a = rsch.ResearchStore(folder).announcements("FPH.NZ")
     assert [x.category for x in a] == ["results", "guidance"] and a[0].price_sensitive is True
+
+
+def test_relevance_is_stable_across_calls(sample):
+    from sharepicker.brief import Context, announcements_with_reactions
+    src = CsvSource(sample)
+    ctx = Context(src, rsch.ResearchStore(sample), {"ASX": src.prices("^AXJO")})
+    a = [x.relevance for x in announcements_with_reactions(ctx, "KOA.AX", "ASX", ON)]
+    b = [x.relevance for x in announcements_with_reactions(ctx, "KOA.AX", "ASX", ON)]
+    assert a == b
+    assert all(x.reaction is None for x in ctx.store.announcements("KOA.AX"))   # store untouched
+
+
+def test_results_date_notice_does_not_hide_upcoming_release(tmp_path):
+    (tmp_path / "announcements.csv").write_text(
+        "date,ticker,headline\n2026-07-15,X.NZ,Notice of FY26 results date\n2026-07-16,X.NZ,Full-year results date confirmed\n")
+    store = rsch.ResearchStore(tmp_path)
+    nr = rsch.next_results(Listing("X.NZ", "NZX", "X", "X", balance_date="06-30"), [], store, date(2026, 7, 20))
+    assert nr["date"] == date(2026, 8, 29)
