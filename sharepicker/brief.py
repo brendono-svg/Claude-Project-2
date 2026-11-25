@@ -9,7 +9,8 @@ from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
 
-from .factors import METRICS
+from .detail import dividend_history, financials_table, performance_table, shorts_line, strength_lines, valuation_history
+from .factors import FX, METRICS
 from .models import Series
 from .report import DISCLAIMER, FIF_LABEL, _money, _n, _p, why
 from .research import (Announcement, ResearchStore, _flag_key, checklist, load_history, memory_for, price_reaction,
@@ -79,6 +80,10 @@ def render_brief(res: ScreenResult, ticker: str, ctx: Context, for_claude: bool 
     a(DISCLAIMER)
     a("")
     other = res.other_listings.get(lst.ticker)
+    prof = (ctx.store.profiles.get(lst.ticker) if ctx.store else None) or {}
+    if prof.get("name") or prof.get("industry"):
+        a(f"**{prof.get('name') or lst.name}** · {prof.get('industry') or lst.sector}")
+        a("")
     a(f"{lst.exchange} · {lst.sector} · {lst.domicile}-resident · price {lst.currency} {_n(s.price, 2)} · "
       f"market cap NZ{_money(s.market_cap_nzd)}" + (f" · also listed as {', '.join(other)}" if other else ""))
     a("")
@@ -166,6 +171,7 @@ def render_brief(res: ScreenResult, ticker: str, ctx: Context, for_claude: bool 
     if anns:
         a("| Date | Type | Headline | Reaction vs index |")
         a("|---|---|---|---|")
+        # (source: NZX/ASX feeds, your announcements.csv)
         top = sorted(anns, key=lambda x: (-x.relevance, x.date))[:12]
         for x in sorted(top, key=lambda x: x.date, reverse=True):
             head = f"[{x.headline}]({x.url})" if x.url else x.headline
@@ -174,6 +180,49 @@ def render_brief(res: ScreenResult, ticker: str, ctx: Context, for_claude: bool 
         a("None in the data. Export them from the NZX or ASX announcements page into announcements.csv.")
     a("")
 
+    fin = financials_table(funds, as_of)
+    if fin:
+        a("## Accounts, last four years")
+        a("")
+        L.extend(fin)
+        src = next((x.source for x in reversed(funds) if x.period_end <= as_of), "")
+        a("")
+        a(f"Source: {src or 'your data'}." + (" Figures are as restated, not as first reported." if "restated" in src else ""))
+        a("")
+    st = strength_lines(f)
+    if st:
+        a("## Financial strength")
+        a("")
+        L.extend(st)
+        a("")
+    stock = ctx.source.prices(lst.ticker).until(as_of)
+    perf = performance_table(stock, ctx.benchmarks.get(lst.exchange), as_of)
+    if perf:
+        a("## Returns against the index")
+        a("")
+        L.extend(perf)
+        a("")
+    a("## Dividend history")
+    a("")
+    L.extend(dividend_history(ctx.source.dividends(lst.ticker), as_of, lst.currency))
+    a("")
+    val = valuation_history(funds, stock, lst, FX(ctx.source).rate, as_of)
+    if val:
+        a("## Valuation against its own history")
+        a("")
+        L.extend(val)
+        a("")
+    news = (ctx.store.news(lst.ticker, as_of) if ctx.store else [])[:8]
+    if news:
+        a("## In the news")
+        a("")
+        for x in news:
+            head = f"[{x.headline}]({x.url})" if x.url.startswith("https://") else x.headline
+            tag = " (broker view)" if x.category == "broker_rating" else ""
+            a(f"- {x.date:%d %b}: {head}{' – ' + x.publisher if x.publisher else ''}{tag}")
+        a("")
+        a("Headlines from Google News; open them for the full story. Media and broker views are opinions.")
+        a("")
     a("## Numbers")
     a("")
     keys = ["earnings_yield", "ebit_ev", "fcf_yield", "roe", "roic", "debt_to_equity", "interest_cover",
@@ -202,7 +251,12 @@ def render_brief(res: ScreenResult, ticker: str, ctx: Context, for_claude: bool 
     a("")
     a(f"RSI(14) {_n(f.get('rsi14'))} · vs 50-day average {_p(f.get('vs_ma50'))} · vs 200-day average "
       f"{_p(f.get('vs_ma200'))} · volume this week {_n(f.get('volume_surge'), 1)}x normal"
-      + (f" · short interest {rs['short_pct']:.1%}" if rs.get("short_pct") is not None else ""))
+      )
+    if ctx.store:
+        sl = shorts_line(*ctx.store.short_trend(lst.ticker, as_of))
+        if sl:
+            a("")
+            a(sl)
     a("")
     mem = memory_for(lst.ticker, ctx.history)
     if mem["path"]:

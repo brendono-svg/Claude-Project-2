@@ -27,6 +27,8 @@ METRICS: dict[str, tuple[str, bool, str]] = {
     "debt_to_equity":   ("quality", False, "low debt / equity"),
     "interest_cover":   ("quality", True, "interest cover"),
     "earnings_consistency": ("quality", True, "consistent earnings growth"),
+    "f_score":          ("quality", True, "financial strength (Piotroski tests passed)"),
+    "net_debt_ebitda":  ("quality", False, "low net debt / EBITDA"),
     "revenue_growth":   ("growth", True, "revenue growth (CAGR)"),
     "eps_growth":       ("growth", True, "EPS growth (CAGR)"),
     "momentum_12_1":    ("momentum", True, "12-1 month price momentum"),
@@ -45,7 +47,7 @@ GROUPS = ("value", "quality", "growth", "momentum", "income", "risk")
 # so they are judged on earnings yield, book value, ROE, consistency, growth and income.
 FINANCIAL_SECTORS = {"financials", "banks", "insurance"}
 NOT_FOR_FINANCIALS = {"ebit_ev", "fcf_yield", "roic", "margin_stability", "debt_to_equity",
-                      "interest_cover", "fcf_cover"}
+                      "interest_cover", "fcf_cover", "net_debt_ebitda"}
 
 
 class FX:
@@ -178,8 +180,10 @@ def snapshot(listing: Listing, source: DataSource, as_of: date, fx: FX,
                 if price is not None and rep_rate and f.shares_out else None)
         nzd = fx.rate(f.currency, "NZD", as_of)
         snap.market_cap_nzd = mcap * nzd if mcap and nzd else None
+        financial = listing.sector.lower() in FINANCIAL_SECTORS
         _value_quality(m, snap.facts, funds, mcap)
-        if listing.sector.lower() in FINANCIAL_SECTORS:
+        _strength(m, snap.facts, funds, financial)
+        if financial:
             snap.not_applicable = set(NOT_FOR_FINANCIALS)
 
     # --- dividends ---------------------------------------------------------
@@ -296,3 +300,58 @@ def technicals(px: Series) -> dict[str, float | None]:
         base = sum(vol[-120:]) / 120
         out["volume_surge"] = (sum(vol[-5:]) / 5) / base if base else None
     return out
+
+
+# Piotroski's nine tests, as far as the data allows. Banks and insurers skip the leverage,
+# liquidity and gross-margin tests, which don't mean the same for them.
+F_TESTS = ("Profitable (ROA > 0)", "Operating cash flow positive", "ROA improved",
+           "Cash flow above profit (earnings quality)", "Long-term debt / assets fell",
+           "Current ratio improved", "No new shares issued", "Gross margin improved", "Asset turnover improved")
+
+
+def _strength(m: dict, facts: dict, funds: list[Fundamentals], financial: bool) -> None:
+    f = funds[-1]
+    prev = funds[-2] if len(funds) >= 2 else None
+    prev2 = funds[-3] if len(funds) >= 3 else None
+
+    def div(a, b):
+        return a / b if a is not None and b not in (None, 0) else None
+    # Ratios worth seeing even when not scored
+    facts["current_ratio"] = None if financial else div(f.current_assets, f.current_liabilities)
+    facts["payout_ratio"] = div(f.dividends_paid, f.net_income) if (f.net_income or 0) > 0 else None
+    facts["rnd_pct"] = div(f.rnd, f.revenue)
+    facts["asset_turnover"] = div(f.revenue, f.total_assets)
+    if not financial and f.ebitda and f.ebitda > 0 and f.debt is not None:
+        m["net_debt_ebitda"] = (f.debt - (f.cash or 0.0)) / f.ebitda
+    facts["net_debt"] = (f.debt - (f.cash or 0.0)) if f.debt is not None else None
+
+    if prev is None:
+        return
+    roa = div(f.net_income, prev.total_assets)              # ROA on beginning-of-year assets
+    roa_prev = div(prev.net_income, prev2.total_assets) if prev2 else None
+    lev = div(f.long_term_debt, f.total_assets)
+    lev_prev = div(prev.long_term_debt, prev.total_assets)
+    cr, cr_prev = div(f.current_assets, f.current_liabilities), div(prev.current_assets, prev.current_liabilities)
+    gm, gm_prev = div(f.gross_profit, f.revenue), div(prev.gross_profit, prev.revenue)
+    at, at_prev = div(f.revenue, prev.total_assets), (div(prev.revenue, prev2.total_assets) if prev2 else None)
+
+    def cmp(a, b, better_if_higher=True):
+        if a is None or b is None:
+            return None
+        return a > b if better_if_higher else a < b
+    tests = [
+        None if roa is None else roa > 0,
+        None if f.operating_cash_flow is None else f.operating_cash_flow > 0,
+        cmp(roa, roa_prev),
+        None if f.operating_cash_flow is None or f.net_income is None else f.operating_cash_flow > f.net_income,
+        None if financial else cmp(lev, lev_prev, better_if_higher=False),
+        None if financial else cmp(cr, cr_prev),
+        None if not (f.shares_out and prev.shares_out) else f.shares_out <= prev.shares_out * 1.005,
+        None if financial else cmp(gm, gm_prev),
+        cmp(at, at_prev),
+    ]
+    have = [t for t in tests if t is not None]
+    facts["f_score_tests"] = [(name, t) for name, t in zip(F_TESTS, tests)]
+    if len(have) >= 5:
+        m["f_score"] = sum(have) / len(have)
+        facts["f_score_text"] = f"{sum(have)}/{len(have)}"

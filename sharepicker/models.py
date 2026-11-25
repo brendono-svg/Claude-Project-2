@@ -52,6 +52,14 @@ class Fundamentals:
     capex: float | None = None
     shares_out: float | None = None
     dps: float | None = None      # dividends per share declared for the period
+    ebitda: float | None = None
+    total_assets: float | None = None
+    current_assets: float | None = None
+    current_liabilities: float | None = None
+    free_cash_flow: float | None = None
+    long_term_debt: float | None = None
+    dividends_paid: float | None = None   # cash paid to shareholders in the year (positive)
+    rnd: float | None = None              # research and development spend
     source: str = "csv"
 
     @property

@@ -134,7 +134,9 @@ class CsvSource:
                     currency=(r.get("currency") or "NZD").strip().upper(),
                     **{k: _f(r.get(k)) for k in ("revenue", "gross_profit", "ebit", "net_income", "equity", "debt",
                                                  "cash", "interest_expense", "operating_cash_flow", "capex",
-                                                 "shares_out", "dps")},
+                                                 "shares_out", "dps", "ebitda", "total_assets", "current_assets",
+                                                 "current_liabilities", "free_cash_flow", "long_term_debt",
+                                                 "dividends_paid", "rnd")},
                     source=self.name))
             for v in self._fund.values():
                 v.sort(key=lambda f: f.period_end)
@@ -190,12 +192,15 @@ class YahooSource:
         self._funds: dict[str, list[Fundamentals]] = {}
         self.symbols: dict[str, str] = {}   # company_id -> ticker for fundamentals (set by open_source)
         self.reporting_lag_months = 3
+        self.delay = 0.0
 
     def _get(self, url: str, cache_name: str, key: str) -> dict | None:
         path = self.cache / cache_name
         if path.exists() and (time.time() - path.stat().st_mtime) < self.cache_days * 86400:
             return json.loads(path.read_text())
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (sharepicker)"})
+        if self.delay:
+            time.sleep(self.delay)   # be polite: one request at a time, spaced out
         try:
             with self._open(req, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -262,7 +267,11 @@ class YahooSource:
                    "annualTotalDebt": "debt", "annualCashAndCashEquivalents": "cash",
                    "annualInterestExpense": "interest_expense", "annualOperatingCashFlow": "operating_cash_flow",
                    "annualCashFlowFromContinuingOperatingActivities": "operating_cash_flow",
-                   "annualCapitalExpenditure": "capex", "annualOrdinarySharesNumber": "shares_out"}
+                   "annualCapitalExpenditure": "capex", "annualOrdinarySharesNumber": "shares_out",
+                   "annualEBITDA": "ebitda", "annualTotalAssets": "total_assets",
+                   "annualCurrentAssets": "current_assets", "annualCurrentLiabilities": "current_liabilities",
+                   "annualFreeCashFlow": "free_cash_flow", "annualLongTermDebt": "long_term_debt",
+                   "annualCashDividendsPaid": "dividends_paid", "annualResearchAndDevelopment": "rnd"}
 
     def fundamentals(self, company_id: str) -> list[Fundamentals]:
         if company_id in self._funds:
@@ -291,10 +300,14 @@ class YahooSource:
                     continue
                 d = date.fromisoformat(pt["asOfDate"])
                 v = float(pt["reportedValue"]["raw"])
-                if field == "capex":
+                if field in ("capex", "dividends_paid"):
                     v = abs(v)          # Yahoo reports spending as a negative cash flow
                 rows.setdefault(d, {}).setdefault(field, v)
                 cur[d] = pt.get("currencyCode") or cur.get(d, default_cur)
+        for vals in rows.values():
+            # Yahoo often has free cash flow but not operating cash flow: rebuild it.
+            if vals.get("operating_cash_flow") is None and vals.get("free_cash_flow") is not None:
+                vals["operating_cash_flow"] = vals["free_cash_flow"] + (vals.get("capex") or 0.0)
         return [Fundamentals(company_id, d, add_months(d, self.reporting_lag_months), cur.get(d, default_cur),
                              source="yahoo (restated)", **vals)
                 for d, vals in sorted(rows.items()) if vals.get("net_income") is not None or vals.get("revenue") is not None]
@@ -358,6 +371,7 @@ def open_source(cfg: dict) -> DataSource:
         y = YahooSource(d.get("cache_dir", str(Path(folder) / "cache")), float(d.get("cache_days", 1)),
                         int(d.get("years", 10)))
         y.reporting_lag_months = lag
+        y.delay = float(d.get("request_delay", 0.2))
         # Statements come per company: fetch them with the first listing in listings.csv.
         for lst in csv_src.universe():
             y.symbols.setdefault(lst.company_id, lst.ticker)

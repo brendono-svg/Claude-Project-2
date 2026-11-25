@@ -192,7 +192,11 @@ def _company(rng, cid, currency, q, g, payout, mcap, lf, lt, end, ye, dom):
                       "currency": currency, "revenue": round(rev), "gross_profit": round(gross), "ebit": round(ebit),
                       "net_income": round(ni), "equity": round(equity), "debt": round(debt), "cash": round(cash),
                       "interest_expense": round(interest), "operating_cash_flow": round(ocf), "capex": round(capex),
-                      "shares_out": round(shares), "dps": round(dps, 4)})
+                      "shares_out": round(shares), "dps": round(dps, 4),
+                      "ebitda": round(ebit + rev * 0.04), "total_assets": round(equity + debt + rev * 0.3),
+                      "current_assets": round(rev * (0.25 + 0.1 * q)), "current_liabilities": round(rev * 0.2),
+                      "free_cash_flow": round(ocf - capex), "long_term_debt": round(debt * 0.8),
+                      "dividends_paid": round(dps * shares), "rnd": round(rev * 0.06) if cid in ("MAT", "BIL", "PLA", "KAU", "COO") else ""})
         eps = (ebit - interest) * 0.72 / shares
         points.append((pe, max(eps, 0.02) * fair_pe, shares))
         if dps > 0:

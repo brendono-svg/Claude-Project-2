@@ -639,3 +639,124 @@ def test_backtest_drops_restated_statements(sample):
     from sharepicker.backtest import _AsReported
     src = _AsReported(CsvSource(sample))
     assert src.fundamentals("KAU") and not src.dropped     # CSV statements are kept
+
+
+# --- feeds and detail ----------------------------------------------------------------
+
+from sharepicker import feeds  # noqa: E402
+
+
+class _FakeOpen:
+    def __init__(self, routes):
+        self.routes, self.calls = routes, []
+
+    def __call__(self, req, timeout=None):
+        url = req.full_url
+        self.calls.append(url)
+        for key, body in self.routes.items():
+            if key in url:
+                if isinstance(body, Exception):
+                    raise body
+                return _Body(body)
+        raise OSError("no route " + url)
+
+
+class _Body:
+    def __init__(self, b):
+        self.b = b if isinstance(b, bytes) else b.encode()
+
+    def read(self):
+        return self.b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+NZX_PAGE = ('<html><script id="__NEXT_DATA__" type="application/json">' + json.dumps({"props": {"pageProps": {
+    "dehydratedState": {"queries": [{"queryKey": ["announcements", "recent", "NZSX"], "state": {"data": {"data": [
+        {"summary": {"id": 11, "title": "Half Year Results", "type": "MKTUPDTE", "companyCode": "FPH",
+                     "publicationDate": "2026-11-20T08:30:00+13:00"},
+         "details": {"releaseDate": "2026-11-20T08:30:00+13:00", "isPriceSensitive": True}},
+        {"summary": {"id": 12, "title": "Other company", "companyCode": "ZZZ", "publicationDate": "2026-11-20"},
+         "details": {}}]}}}]}}}}) + '</script></html>')
+ASX_JSON = json.dumps({"data": {"items": [{"date": "2026-11-19T22:50:52.000Z", "documentKey": "k1",
+                                           "headline": "Appendix 3Y - J Smith", "announcementType": "SECURITY HOLDER DETAILS",
+                                           "isPriceSensitive": False}]}})
+RSS = """<rss><channel><item><title>FPH tipped to have strong result - NZ Herald</title><link>https://n.z/1</link>
+<guid>g1</guid><pubDate>Mon, 23 Nov 2026 01:00:00 GMT</pubDate><source url="https://nzherald.co.nz">NZ Herald</source></item>
+<item><title>Old story - X</title><link>https://n.z/2</link><guid>g2</guid><pubDate>Mon, 01 Jan 2024 01:00:00 GMT</pubDate></item>
+</channel></rss>"""
+ASIC_INDEX = json.dumps([{"date": 20261119, "version": "001"}, {"date": 20261020, "version": "001"}])
+ASIC_CSV = "Product,Product Code,Reported Short Positions,Total Product in Issue,%\nCOMMONWEALTH BANK,CBA,1,2,2.765\n"
+
+
+def _listings():
+    return [Listing("FPH.NZ", "NZX", "FPH", "Fisher & Paykel Healthcare"),
+            Listing("CBA.AX", "ASX", "CBA", "Commonwealth Bank", domicile="AU")]
+
+
+def test_feeds_parse_and_merge(tmp_path):
+    opener = _FakeOpen({"nzx.com": NZX_PAGE, "markitdigital": ASX_JSON, "news.google": RSS,
+                        "short-selling-data.json": ASIC_INDEX, "SSDailyAggShortPos": ASIC_CSV,
+                        "finance/search": json.dumps({"quotes": [{"symbol": "CBA.AX", "longname": "Commonwealth Bank of Australia",
+                                                                  "industry": "Banks"}]})})
+    f = feeds.Fetcher(tmp_path, delay=0, opener=opener)
+    a = feeds.collect(_listings(), f, None, log=lambda m: None)
+    ids = {r["id"] for r in a["announcements"]}
+    assert ids == {"NZX:11", "ASX:k1"}
+    nzx = next(r for r in a["announcements"] if r["id"] == "NZX:11")
+    assert nzx["ticker"] == "FPH.NZ" and nzx["price_sensitive"] and nzx["date"] == "2026-11-20"
+    assert {r["headline"] for r in a["news"]} == {"FPH tipped to have strong result"}   # old item dropped, publisher stripped
+    assert {(r["date"], r["short_pct"]) for r in a["shorts"]} == {("2026-11-19", 0.02765), ("2026-10-20", 0.02765)}
+    assert a["profiles"]["CBA.AX"]["industry"] == "Banks"
+    # Second run with every feed failing keeps everything and records the failures.
+    g = feeds.Fetcher(tmp_path / "c2", delay=0, opener=_FakeOpen({}))
+    b = feeds.collect(_listings(), g, a, log=lambda m: None)
+    for k in ("announcements", "news", "shorts"):
+        assert len(b[k]) == len(a[k]) and len({r["id"] for r in b[k]}) == len(b[k])
+    assert any(c["failed"] for c in b["coverage"])
+
+
+def test_nzx_layout_change_is_reported(tmp_path):
+    f = feeds.Fetcher(tmp_path, delay=0, opener=_FakeOpen({"nzx.com": "<html>new design</html>"}))
+    assert feeds.nzx_announcements(f, _listings()) is None and "nzx" in f.errors
+
+
+def test_archive_drops_only_old_items():
+    old = {"announcements": [{"id": "A", "date": "2020-01-01"}, {"id": "B", "date": "2026-01-01"}]}
+    m = feeds.merge(old, {"announcements": [{"id": "B", "date": "2026-01-01", "headline": "new"}]}, date(2026, 11, 25))
+    assert [r["id"] for r in m["announcements"]] == ["B"] and m["announcements"][0]["headline"] == "new"
+
+
+def test_store_reads_archive_and_merges_dual_listings(tmp_path):
+    store = rsch.ResearchStore(tmp_path)
+    store.add_archive({"announcements": [
+        {"id": "NZX:1", "date": "2026-11-20", "ticker": "FPH.NZ", "headline": "Half Year Results", "source": "NZX"},
+        {"id": "ASX:1", "date": "2026-11-20", "ticker": "FPH.AX", "headline": "Half year results", "source": "ASX"}],
+        "news": [{"id": "N1", "date": "2026-11-21", "ticker": "FPH.NZ", "headline": "Broker lifts price target on FPH",
+                  "publisher": "X"}],
+        "shorts": [{"id": "s", "date": "2026-11-19", "ticker": "CBA.AX", "short_pct": 0.03},
+                   {"id": "t", "date": "2026-10-20", "ticker": "CBA.AX", "short_pct": 0.02}]})
+    store.aliases = {"FPH.NZ": ["FPH.NZ", "FPH.AX"], "FPH.AX": ["FPH.NZ", "FPH.AX"]}
+    assert len(store.announcements("FPH.NZ")) == 1                         # re-post merged
+    assert store.news("FPH.AX")[0].category == "broker_rating"
+    assert store.short_trend("CBA.AX", date(2026, 11, 20)) == (0.03, 0.02)
+
+
+def test_f_score_and_detail_tables(sample):
+    from sharepicker import detail
+    src = CsvSource(sample)
+    res = run_screen({}, src, ON)
+    kau = next(r for r in res.ranked if r.ticker == "KAU.NZ")
+    assert kau.snap.metrics["f_score"] is not None and "/" in kau.snap.facts["f_score_text"]
+    boo = next(r for r in res.ranked if r.ticker == "BOO.AX")                  # a bank: fewer tests
+    tests = dict(boo.snap.facts["f_score_tests"])
+    assert tests["Current ratio improved"] is None and boo.snap.metrics["net_debt_ebitda"] is None
+    assert detail.financials_table(src.fundamentals("KAU"), ON)[0].startswith("| NZD |")
+    perf = detail.performance_table(src.prices("KAU.NZ"), src.prices("^NZ50"), ON)
+    assert any(r.startswith("| 1 year |") for r in perf)
+    divs = detail.dividend_history(src.dividends("KAU.NZ"), ON, "NZD")
+    assert "Paid in each of the last" in divs[-1]

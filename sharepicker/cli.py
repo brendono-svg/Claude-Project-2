@@ -261,6 +261,14 @@ def research_context(cfg: dict, source, as_of: date) -> tuple[Context, str]:
     folder = Path(d.get("folder", "my-data/sample"))
     hist_dir = str(r.get("history_dir") or folder / "history")
     store = ResearchStore(folder, r.get("journal"))
+    arch = r.get("archive")
+    if arch and Path(arch).exists():
+        import json
+        store.add_archive(json.loads(Path(arch).read_text(encoding="utf-8")))
+    companies: dict[str, list[str]] = {}
+    for lst in source.universe():
+        companies.setdefault(lst.company_id, []).append(lst.ticker)
+    store.aliases = {t: ts for ts in companies.values() for t in ts}
     websites = {}
     lp = folder / "listings.csv"
     if lp.exists():

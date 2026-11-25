@@ -1,4 +1,4 @@
-# Real NZX/ASX large caps with live Yahoo data (prices, dividends, AUD/NZD and restated annual
+# About 140 real NZX/ASX companies with live Yahoo data (prices, dividends, AUD/NZD and restated annual
 # statements). Needs network access to query1.finance.yahoo.com.
 #   python -m sharepicker screen examples/live/screen.yaml --save --json my-data/live.json --with-briefs
 # Or let scripts/refresh_live.py do it.
@@ -15,4 +15,5 @@ filters:
   min_traded_value_nzd: 200000
 research:
   history_dir: my-data/live-history
+  archive: my-data/publish/archive.json   # announcements, news, short interest (scripts/refresh_live.py)
   journal: my-data/journal.yaml   # your own theses (create it; see README)

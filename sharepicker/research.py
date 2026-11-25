@@ -36,6 +36,8 @@ from .models import Fundamentals, Listing, Series
 # (category, pattern, base relevance). First match wins, so specific patterns come first.
 CATEGORIES: list[tuple[str, str, float]] = [
     # Meeting outcomes and results-date notices mention "results" but are not results releases.
+    ("broker_rating", r"price target|target price|(upgrade|downgrade)[sd]? (to|from) |outperform|underperform|"
+                      r"overweight|underweight|buy rating|sell rating|initiates coverage|reiterate", 0.55),
     ("agm", r"results? of (the )?(annual|special|general|shareholders'?)? ?(general )?(meeting|agm|asm)", 0.3),
     ("results_notice", r"results? (date|briefing|webcast|call|presentation date|announcement date)|"
                        r"notice of .*results|(date|timing) of .*results", 0.4),
@@ -67,7 +69,8 @@ LABELS = {"takeover": "Takeover / scheme", "guidance_down": "Guidance cut", "gui
           "results": "Results", "guidance": "Guidance / outlook", "leadership": "Leadership change",
           "acquisition": "Acquisition / sale", "director_trade": "Director trade",
           "substantial_holder": "Substantial holder", "debt": "Debt / funding", "dividend": "Dividend",
-          "agm": "Meeting", "results_notice": "Results date / briefing", "other": "Other"}
+          "agm": "Meeting", "results_notice": "Results date / briefing", "broker_rating": "Broker view",
+          "other": "Other"}
 
 
 def classify(headline: str) -> tuple[str, float]:
@@ -88,6 +91,8 @@ class Announcement:
     category: str = "other"
     relevance: float = 0.2
     reaction: float | None = None    # stock minus home index, close before -> close day after
+    source: str = ""                 # NZX, ASX, News, or blank for your own file
+    publisher: str = ""
 
     @property
     def label(self) -> str:
@@ -214,12 +219,60 @@ class ResearchStore:
         for s in self._shorts.values():
             pts = sorted(zip(s.dates, s.values))
             s.dates, s.values = [p[0] for p in pts], [p[1] for p in pts]
+        self._news: dict[str, list[Announcement]] = {}
+        self.profiles: dict[str, dict] = {}
+        self.coverage: list[dict] = []
         jp = Path(journal) if journal else self.folder / "journal.yaml"
         self.journal: dict[str, JournalEntry] = load_journal(jp) if jp.exists() else {}
 
+    def _tickers(self, ticker: str) -> list[str]:
+        return getattr(self, "aliases", {}).get(ticker, [ticker])
+
     def announcements(self, ticker: str, until: date | None = None) -> list[Announcement]:
-        a = self._ann.get(ticker, [])
-        return [x for x in a if until is None or x.date <= until]
+        """Official announcements for the company (all its listings; ASX re-posts of NZX ones merged)."""
+        seen, out = set(), []
+        for t in self._tickers(ticker):
+            for x in self._ann.get(t, []):
+                key = (x.date, re.sub(r"\W+", "", x.headline.lower())[:60])
+                if (until is None or x.date <= until) and key not in seen:
+                    seen.add(key)
+                    out.append(x)
+        return sorted(out, key=lambda a: a.date)
+
+    def news(self, ticker: str, until: date | None = None) -> list[Announcement]:
+        out = [x for t in self._tickers(ticker) for x in self._news.get(t, []) if until is None or x.date <= until]
+        return sorted({x.headline: x for x in out}.values(), key=lambda a: a.date, reverse=True)
+
+    def add_archive(self, archive: dict) -> None:
+        """Load a feeds archive (sharepicker/feeds.py) on top of any files."""
+        for r in archive.get("announcements", []):
+            cat, rel = classify(r["headline"])
+            self._ann.setdefault(r["ticker"], []).append(Announcement(
+                date.fromisoformat(r["date"]), r["ticker"], r["headline"], r.get("url", ""),
+                r.get("price_sensitive"), cat, rel, source=r.get("source", "")))
+        for v in self._ann.values():
+            v.sort(key=lambda a: a.date)
+        for r in archive.get("news", []):
+            cat, rel = classify(r["headline"])
+            self._news.setdefault(r["ticker"], []).append(Announcement(
+                date.fromisoformat(r["date"]), r["ticker"], r["headline"], r.get("url", ""), None,
+                cat, min(rel, 0.6), source="News", publisher=r.get("publisher", "")))
+        for r in archive.get("shorts", []):
+            s = self._shorts.setdefault(r["ticker"], Series(r["ticker"]))
+            s.dates.append(date.fromisoformat(r["date"]))
+            s.values.append(float(r["short_pct"]))
+        for s in self._shorts.values():
+            pts = sorted(set(zip(s.dates, s.values)))
+            s.dates, s.values = [x[0] for x in pts], [x[1] for x in pts]
+        self.profiles.update(archive.get("profiles") or {})
+        self.coverage = archive.get("coverage") or []
+
+    def short_trend(self, ticker: str, on: date) -> tuple[float | None, float | None]:
+        """Short interest now and about a month earlier."""
+        s = self._shorts.get(ticker)
+        if not s:
+            return None, None
+        return s.on(on, 14), s.on(on - timedelta(days=28), 14)
 
     def events(self, ticker: str) -> list[Event]:
         return self._events.get(ticker, [])
@@ -435,11 +488,20 @@ def checklist(r, res, store: ResearchStore | None, funds: list[Fundamentals], as
     if nr and (nr["date"] - as_of).days <= 14:
         out["next_results"] = "SOON: " + out["next_results"]
     if short is not None:
-        out["short_interest"] = f"{short:.1%} of shares sold short" + (" (high)" if short >= 0.05 else "")
+        now, before = store.short_trend(lst.ticker, as_of) if store else (None, None)
+        trend = ""
+        if before is not None and now is not None and abs(now - before) >= 0.005:
+            trend = f", {'up' if now > before else 'down'} from {before:.1%} a month ago"
+        out["short_interest"] = f"{short:.1%} of shares sold short{trend}" + (" (high)" if short >= 0.05 else "")
     recent = [a for a in (store.announcements(lst.ticker, as_of) if store else [])
               if (as_of - a.date).days <= 30 and a.relevance >= 0.8]
     if recent:
         out["recent_news"] = "; ".join(f"{a.label} {a.date:%d %b}" for a in recent[-3:])
+    press = [a for a in (store.news(lst.ticker, as_of) if store else []) if (as_of - a.date).days <= 30]
+    if press:
+        brokers = sum(1 for a in press if a.category == "broker_rating")
+        out["media"] = f"{len(press)} headline{'s' if len(press) != 1 else ''} in 30 days" + \
+            (f", {brokers} broker view{'s' if brokers != 1 else ''}" if brokers else "")
     if history:
         mem = memory_for(lst.ticker, history)
         if mem["path"]:

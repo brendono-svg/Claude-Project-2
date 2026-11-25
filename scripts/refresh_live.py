@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from sharepicker.cli import add_briefs_json, add_research_json, load_config, research_context, resolve_as_of  # noqa: E402
 from sharepicker.data import open_source  # noqa: E402
+from sharepicker.feeds import Fetcher, collect  # noqa: E402
 from sharepicker.report import dumps, screen_json  # noqa: E402
 from sharepicker.research import save_history  # noqa: E402
 from sharepicker.screen import run_screen  # noqa: E402
@@ -57,6 +58,8 @@ def main() -> int:
     ap.add_argument("--config", default=str(ROOT / "examples" / "live" / "screen.yaml"))
     ap.add_argument("--out", default="my-data/publish/screen.json")
     ap.add_argument("--previous", help="Last published screen.json, for the Changes tab")
+    ap.add_argument("--previous-archive", help="Last published archive.json (announcements, news, short interest)")
+    ap.add_argument("--no-feeds", action="store_true", help="Skip announcements, news and short interest")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -66,6 +69,29 @@ def main() -> int:
     if args.previous:
         prev = history_from_published(Path(args.previous), hist_dir)
         print(f"Previous screen: {prev or 'none usable'}", file=sys.stderr)
+
+    # Research feeds: merge with the previous archive so nothing collected is lost.
+    arch_path = Path((cfg.get("research") or {}).get("archive") or "my-data/publish/archive.json")
+    old = None
+    if args.previous_archive and Path(args.previous_archive).exists():
+        old = json.loads(Path(args.previous_archive).read_text(encoding="utf-8"))
+    elif arch_path.exists():
+        old = json.loads(arch_path.read_text(encoding="utf-8"))
+    if not args.no_feeds:
+        print("Collecting research feeds:", file=sys.stderr)
+        fetcher = Fetcher(Path((cfg.get("data") or {}).get("cache_dir", "my-data/cache")) / "feeds")
+        archive = collect(source.universe(), fetcher, old, log=lambda m: print(m, file=sys.stderr))
+        before = sum(len((old or {}).get(k, [])) for k in ("announcements", "news", "shorts"))
+        after = sum(len(archive[k]) for k in ("announcements", "news", "shorts"))
+        if after < before:
+            print(f"Archive would shrink ({before} -> {after} items): not writing it.", file=sys.stderr)
+            return 2
+        arch_path.parent.mkdir(parents=True, exist_ok=True)
+        arch_path.write_text(json.dumps(archive, separators=(",", ":")), encoding="utf-8")
+        print(f"Archive: {after} items ({after - before:+d})", file=sys.stderr)
+    elif old is not None:
+        arch_path.parent.mkdir(parents=True, exist_ok=True)
+        arch_path.write_text(json.dumps(old, separators=(",", ":")), encoding="utf-8")
 
     res = run_screen(cfg, source, as_of)
     ctx, hdir = research_context(cfg, source, as_of)

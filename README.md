@@ -148,6 +148,30 @@ python -m sharepicker screen examples/live/screen.yaml
 - The Sharepicker page loads `screen.json` published beside it, and can switch between live data, the
   fictional demo and your own file. Republish both with the same artifact URL to refresh it.
 
+### Research feeds (announcements, news, short interest)
+
+`scripts/refresh_live.py` also collects, for every company in `examples/live/listings.csv`
+(about 140: most of the NZX 50 plus about 90 ASX companies):
+
+| Feed | Source | Notes |
+|---|---|---|
+| ASX announcements | the ASX website's own feed (`asx.api.markitdigital.com`) | latest 5 per company, with the price-sensitive flag |
+| NZX announcements | `nzx.com/markets/NZSX/announcements` | latest ~200 across the market; skipped with a warning if the page layout changes |
+| News headlines | Google News search, NZ edition | last 120 days, up to 10 per company; broker price-target stories are tagged |
+| Short interest | ASIC daily short positions | latest day and about a month earlier, ASX shares only |
+| Company profiles | Yahoo Finance search | full name and industry |
+
+Feeds only show the latest items, so each refresh merges into `archive.json`, keyed by each item's
+source id. Nothing collected is dropped (except after 3 years), and a refresh that would shrink the
+archive stops instead of publishing. Every run records which feeds worked in `coverage`. The page
+publishes `archive.json` beside `screen.json`, and the weekly refresh reads it back.
+
+Each brief now also has: the last four years of accounts, financial strength (Piotroski tests,
+scored as tests passed out of tests with data; banks skip the ones that don't apply), returns against the index
+over 1 month to 5 years, ten years of dividends (streak, growth, cuts), P/E and price/book at past
+result dates compared with now, the short-interest trend, and recent news. Net debt/EBITDA and the
+F-score are now part of the quality factor.
+
 ### Research layer: results, announcements, your thesis
 
 Borrowing the useful parts of AI trading-bot designs (news relevance scoring, independent
