@@ -406,7 +406,9 @@ class _PreferCsvFundamentals(LayeredSource):
             # NZX's own record of each dividend's imputation credits, matched on the record date.
             filled = []
             for d in divs:
-                m = next((pct for rec, pct in nzx if pct is not None and -3 <= (rec - d.ex_date).days <= 10), None)
+                near = [(abs((rec - d.ex_date).days), pct) for rec, pct in nzx
+                        if pct is not None and -3 <= (rec - d.ex_date).days <= 10]
+                m = min(near)[1] if near else None     # the closest record date wins
                 filled.append(replace(d, imputed_pct=m) if m is not None and d.imputed_pct is None else d)
             divs = filled
         if lst is None or lst.credit_pct is None:

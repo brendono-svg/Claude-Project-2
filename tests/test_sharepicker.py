@@ -767,7 +767,8 @@ def test_nzx_company_page_gives_imputation_and_people(tmp_path):
         {"queryKey": ["instrument", "pastDividends", "X"], "state": {"data": [
             {"id": 1, "type": "INT", "recordDate": 1701774000, "amount": "18.0", "currencyCode": "NZD",
              "imputationCreditAmount": "0.07"},
-            {"id": 2, "type": "FIN", "recordDate": 1719403200, "amount": "20.0", "imputationCreditAmount": "0"}]}},
+            {"id": 2, "type": "FIN", "recordDate": 1719403200, "amount": "20.0", "imputationCreditAmount": "0"},
+            {"id": 3, "type": "SPC", "amount": "5.0"}]}},
         {"queryKey": ["company", "summary", "FPH000000"], "state": {"data": {"financialYearEnd": {"month": 3, "day": 31},
                                                                           "firstListedDate": "1979-11-01T00:00:00+13:00"}}},
         {"queryKey": ["company", "directors", "FPH000000"], "state": {"data": [
@@ -775,5 +776,6 @@ def test_nzx_company_page_gives_imputation_and_people(tmp_path):
             {"firstName": "C", "lastName": "D", "role": "Director", "isCurrent": False}]}}]}}}}) + "</script>")
     f = feeds.Fetcher(tmp_path, delay=0, opener=_FakeOpen({"instruments/FPH": page}))
     c = feeds.nzx_company(f, Listing("FPH.NZ", "NZX", "FPH", "F"))
-    assert [d["imputed_pct"] for d in c["dividends"]] == [1.0, 0.0]          # 7c on 18c = fully imputed
+    assert [d["imputed_pct"] for d in c["dividends"]] == [1.0, 0.0]          # 7c on 18c = fully imputed; undated row skipped
+    assert c["dividends"][0]["date"] == "2023-12-06"                           # NZ date, not UTC
     assert c["year_end"] == "03-31" and c["people"] == [{"name": "A B", "role": "Chair"}]

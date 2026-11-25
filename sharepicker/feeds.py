@@ -26,9 +26,11 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .models import Listing
 
+NZ_TZ = ZoneInfo("Pacific/Auckland")
 UA = {"User-Agent": "Mozilla/5.0 (sharepicker research)"}
 KEEP_DAYS = 3 * 365
 
@@ -146,11 +148,12 @@ def nzx_company(f: Fetcher, lst: Listing) -> dict | None:
             for dv in data:
                 try:
                     cash = float(dv["amount"]) / 100          # cents per share
-                    ic = float(dv.get("imputationCreditAmount") or 0)
-                except (KeyError, TypeError, ValueError):
+                    ic = float(dv.get("imputationCreditAmount") or 0)   # dollars per share
+                    # NZX timestamps are midnight NZ time: convert there, not in UTC.
+                    when = datetime.fromtimestamp(dv.get("recordDate") or dv.get("expectedDate"), NZ_TZ)
+                except (KeyError, TypeError, ValueError, OSError):
                     continue
                 full = cash * 28 / 72
-                when = datetime.fromtimestamp(dv.get("recordDate") or dv.get("expectedDate"), timezone.utc)
                 out["dividends"].append({
                     "id": f"NZXDIV:{dv.get('id')}", "ticker": lst.ticker, "date": when.date().isoformat(),
                     "kind": dv.get("type"), "cash": round(cash, 6), "currency": dv.get("currencyCode", "NZD"),
