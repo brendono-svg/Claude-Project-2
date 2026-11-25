@@ -281,6 +281,8 @@ class YahooSource:
     def _parse_fundamentals(self, company_id: str, data: dict | None) -> list[Fundamentals]:
         rows: dict[date, dict] = {}
         cur: dict[date, str] = {}
+        sym = self.symbols.get(company_id, "")
+        default_cur = "AUD" if sym.endswith(".AX") else "NZD" if sym.endswith(".NZ") else "USD"
         for res in ((data or {}).get("timeseries") or {}).get("result") or []:
             kind = ((res.get("meta") or {}).get("type") or [None])[0]
             field = self.FUND_FIELDS.get(kind)
@@ -292,8 +294,8 @@ class YahooSource:
                 if field == "capex":
                     v = abs(v)          # Yahoo reports spending as a negative cash flow
                 rows.setdefault(d, {}).setdefault(field, v)
-                cur[d] = pt.get("currencyCode") or cur.get(d, "NZD")
-        return [Fundamentals(company_id, d, add_months(d, self.reporting_lag_months), cur.get(d, "NZD"),
+                cur[d] = pt.get("currencyCode") or cur.get(d, default_cur)
+        return [Fundamentals(company_id, d, add_months(d, self.reporting_lag_months), cur.get(d, default_cur),
                              source="yahoo (restated)", **vals)
                 for d, vals in sorted(rows.items()) if vals.get("net_income") is not None or vals.get("revenue") is not None]
 
@@ -388,6 +390,6 @@ class _PreferCsvFundamentals(LayeredSource):
             if lst.domicile == "NZ" and d.imputed_pct is None:
                 d = replace(d, imputed_pct=lst.credit_pct)
             elif lst.domicile == "AU" and d.franked_pct is None:
-                d = replace(d, franked_pct=lst.credit_pct, nz_credit_pct=d.nz_credit_pct or 0.0)
+                d = replace(d, franked_pct=lst.credit_pct)   # trans-Tasman NZ credits stay unknown (flagged)
             out.append(d)
         return out
