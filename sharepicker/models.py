@@ -21,6 +21,7 @@ class Listing:
     all_ords_to: date | None = None
     listed_from: date | None = None
     listed_to: date | None = None       # set for delisted shares (avoids survivorship bias)
+    balance_date: str = ""              # "MM-DD" financial year end, e.g. "03-31"; for the results calendar
     source: str = "csv"
 
     def listed_on(self, d: date) -> bool:

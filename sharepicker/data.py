@@ -99,7 +99,7 @@ class CsvSource:
                 franking_account=_b(r.get("franking_account")),
                 all_ords_from=_d(r.get("all_ords_from")), all_ords_to=_d(r.get("all_ords_to")),
                 listed_from=_d(r.get("listed_from")), listed_to=_d(r.get("listed_to")),
-                source=self.name))
+                balance_date=(r.get("balance_date") or "").strip(), source=self.name))
         return out
 
     def _load_prices(self) -> dict[str, Series]:

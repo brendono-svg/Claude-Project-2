@@ -406,3 +406,155 @@ def test_benchmark_returns_line_up_by_month(sample):
     bt = run_backtest({"backtest": {"top_n": 5}}, CsvSource(sample), date(2024, 1, 1), ON)
     for v in bt.bench.values():
         assert len(v) == len(bt.returns)
+
+
+# --- research layer ----------------------------------------------------------------
+
+from sharepicker import research as rsch  # noqa: E402
+
+
+@pytest.mark.parametrize("headline,cat", [
+    ("Half-year result for the period ended 31 December 2025", "results"),
+    ("Appendix 4E and annual report", "results"),
+    ("Trading update: FY27 earnings guidance lowered on weaker demand", "guidance_down"),
+    ("Company raises full-year earnings guidance", "guidance_up"),
+    ("Fully underwritten placement and share purchase plan", "capital_raise"),
+    ("Trading halt", "trading_halt"),
+    ("Receipt of non-binding indicative proposal", "takeover"),
+    ("Ongoing disclosure notice: director's interest", "director_trade"),
+    ("Quarterly activities report and Appendix 5B", "quarterly"),
+    ("CEO resignation", "leadership"),
+    ("Notice of annual general meeting", "agm"),
+    ("Change of registry address", "other"),
+])
+def test_classify_announcements(headline, cat):
+    assert rsch.classify(headline)[0] == cat
+
+
+def test_results_deadlines():
+    assert mr.results_deadline(date(2026, 6, 30), "NZX") == date(2026, 8, 29)   # 60 days
+    assert mr.results_deadline(date(2026, 6, 30), "ASX") == date(2026, 8, 31)   # 2 months, month end
+    assert mr.results_deadline(date(2026, 12, 31), "ASX") == date(2027, 2, 28)
+    assert mr.results_deadline(date(2026, 9, 30), "ASX", quarterly=True) == date(2026, 10, 31)
+
+
+def test_next_results_falls_back_to_deadline(tmp_path):
+    store = rsch.ResearchStore(tmp_path)        # empty: no events, no announcements
+    funds = [Fundamentals("X", date(2025, 6, 30), date(2025, 9, 30)), Fundamentals("X", date(2026, 6, 30), date(2026, 9, 30))]
+    for ex, expected in (("NZX", date(2026, 8, 29)), ("ASX", date(2026, 8, 31))):
+        nr = rsch.next_results(Listing("X", ex, "X", "X"), funds, store, date(2026, 7, 15))
+        assert nr["date"] == expected and nr["basis"].startswith("listing-rule deadline") and nr["kind"] == "full-year"
+    nr = rsch.next_results(Listing("X", "NZX", "X", "X"), funds, store, date(2026, 9, 10))
+    assert nr["date"] == date(2027, 3, 1) and nr["kind"] == "half-year"   # 31 Dec + 60 days
+
+
+def test_next_results_uses_confirmed_then_history(sample):
+    store = rsch.ResearchStore(sample)
+    src = CsvSource(sample)
+    kau = next(x for x in src.universe() if x.ticker == "KAU.NZ")
+    nr = rsch.next_results(kau, src.fundamentals("KAU"), store, ON)
+    assert nr["date"] == date(2026, 11, 27) and nr["basis"] == "confirmed"
+    koa = next(x for x in src.universe() if x.ticker == "KOA.AX")
+    nr = rsch.next_results(koa, src.fundamentals("KOA"), store, ON)
+    assert nr["basis"].startswith("estimated") and date(2027, 2, 1) < nr["date"] <= nr["deadline"]
+
+
+def test_rules_parse_check_and_reject_typos():
+    assert rsch.parse_rule("roe < 10%") == ("roe", "<", 0.10)
+    ctx = {"metrics": {"roe": 0.08, "dividend_cover": None}, "top": {"rank": 3.0}}
+    assert rsch.check_rule("roe < 10%", ctx) == ("broken", 0.08)
+    assert rsch.check_rule("rank > 5", ctx)[0] == "ok"
+    assert rsch.check_rule("dividend_cover < 1.2", ctx)[0] == "unknown"
+    with pytest.raises(rsch.RuleError):
+        rsch.parse_rule("dividnd_cover < 1")
+    with pytest.raises(rsch.RuleError):
+        rsch.parse_rule("__import__('os') < 1")
+
+
+def test_journal_typo_fails_loudly(tmp_path):
+    (tmp_path / "journal.yaml").write_text("shares:\n  ABC.NZ:\n    break_if: ['roe << 5']\n")
+    with pytest.raises(rsch.RuleError):
+        rsch.ResearchStore(tmp_path)
+
+
+def test_price_reaction_is_relative_to_index():
+    stock = daily("S", date(2026, 1, 5), date(2026, 1, 16), price=10.0)
+    index = daily("I", date(2026, 1, 5), date(2026, 1, 16), price=100.0)
+    i = stock.dates.index(date(2026, 1, 12))
+    for k in range(i, len(stock.values)):
+        stock.values[k] = 11.0          # +10% on the announcement day
+    for k in range(i + 1, len(index.values)):
+        index.values[k] = 102.0         # index +2% the day after
+    assert rsch.price_reaction(stock, index, date(2026, 1, 12)) == pytest.approx(0.08)
+    assert rsch.price_reaction(stock, index, date(2026, 1, 16)) is None   # no day after yet
+
+
+def test_sample_story_reactions_and_checklist(sample):
+    from sharepicker.brief import Context, announcements_with_reactions, research_for
+    src = CsvSource(sample)
+    res = run_screen({}, src, ON)
+    store = rsch.ResearchStore(sample)
+    ctx = Context(src, store, {"NZX": src.prices("^NZ50"), "ASX": src.prices("^AXJO")})
+    anns = announcements_with_reactions(ctx, "KOA.AX", "ASX", ON)
+    cut = next(a for a in anns if a.category == "guidance_down")
+    assert cut.reaction < -0.05 and cut.relevance == 1.0
+    koa = next(r for r in res.ranked if r.ticker == "KOA.AX")
+    lenses = research_for(koa, res, ctx)["lenses"]
+    assert lenses["thesis"].startswith("BROKEN") and "short_pct > 5%" in lenses["thesis"]
+    assert "high" in lenses["short_interest"]
+    pur = next(r for r in res.ranked if r.ticker == "PUR.NZ")
+    assert research_for(pur, res, ctx)["lenses"]["thesis"].startswith("review due")
+
+
+def test_history_memory_and_persistent_flags(tmp_path):
+    hist = [{"as_of": f"2026-0{m}-28", "shares": {"A": {"rank": m, "composite": 50, "red": ["Low interest cover (2.1x): x"]}}}
+            for m in (6, 7, 8)]
+    mem = rsch.memory_for("A", hist)
+    assert [p[1] for p in mem["path"]] == [6, 7, 8]
+    assert mem["persistent_flags"] == {"Low interest cover": 3}
+    hist[1]["shares"]["A"]["red"] = []
+    assert rsch.memory_for("A", hist)["persistent_flags"] == {}
+
+
+def test_cli_research_commands(sample, tmp_path):
+    hist = tmp_path / "hist"
+    cfg = tmp_path / "screen.yaml"
+    cfg.write_text(f"data: {{source: csv, folder: '{sample}'}}\nresearch: {{history_dir: '{hist}'}}\n")
+    assert main(["screen", str(cfg), "--as-of", "2026-10-30", "--save", "-o", str(tmp_path / "s.md")]) == 0
+    assert (hist / "screen-2026-10-30.json").exists()
+    out = tmp_path / "d.md"
+    assert main(["digest", str(cfg), "--as-of", "2026-11-20", "-o", str(out)]) == 0
+    d = out.read_text()
+    assert "Compared with the screen saved for **2026-10-30**" in d
+    assert "ECH.AX** Takeover" in d and "KAU.NZ** Kauri Health (confirmed)" in d
+    assert "KOA.AX**: BROKEN" in d
+    b = tmp_path / "b.md"
+    assert main(["brief", str(cfg), "KAU.AX", "--for-claude", "--as-of", "2026-11-20", "-o", str(b)]) == 0
+    t = b.read_text()
+    assert "Kauri Health (KAU.NZ)" in t and "Prompt to paste into Claude" in t and "nzx.com" in t
+    js = tmp_path / "s.json"
+    assert main(["screen", str(cfg), "--as-of", "2026-11-20", "--json", str(js), "-o", str(tmp_path / "x.md")]) == 0
+    sh = {s["ticker"]: s for s in json.loads(js.read_text())["shares"]}
+    assert sh["KOA.AX"]["research"]["lenses"]["thesis"].startswith("BROKEN")
+    assert sh["KAU.NZ"]["research"]["next_results"]["date"] == "2026-11-27"
+
+
+def test_next_results_from_balance_date_only(tmp_path):
+    store = rsch.ResearchStore(tmp_path)
+    lst = Listing("X.NZ", "NZX", "X", "X", balance_date="03-31")
+    nr = rsch.next_results(lst, [], store, date(2026, 11, 20))
+    assert nr["date"] == date(2026, 11, 29) and nr["kind"] == "half-year"   # 30 Sep + 60 days
+
+
+def test_cli_note_and_announce(tmp_path):
+    folder = tmp_path / "data"
+    folder.mkdir()
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(f"data: {{folder: '{folder}'}}\n")
+    assert main(["note", str(cfg), "fph.nz", "Margins", "recovering"]) == 0
+    notes = list((folder / "research" / "FPH.NZ").glob("*.md"))
+    assert notes and "Margins recovering" in notes[0].read_text()
+    assert main(["announce", str(cfg), "FPH.NZ", "2026-11-25", "Half-year result", "--sensitive"]) == 0
+    assert main(["announce", str(cfg), "FPH.NZ", "2026-11-26", "Investor day presentation"]) == 0
+    a = rsch.ResearchStore(folder).announcements("FPH.NZ")
+    assert [x.category for x in a] == ["results", "guidance"] and a[0].price_sensitive is True

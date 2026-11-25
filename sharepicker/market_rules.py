@@ -6,7 +6,7 @@ known in late 2026. Broker fees in particular change often: check the broker's o
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from kiwiwealth.nz_rules import Rule
@@ -44,6 +44,18 @@ RULES: dict[str, Rule] = {
         source="https://www.ird.govt.nz/income-tax/income-tax-for-individuals/types-of-individual-income/overseas-income/foreign-investment-funds-fifs",
         note="Unit trusts, A-REITs and stapled securities: exemption status not verified here, "
              "so they are treated as FIF. Check with IRD or your tax adviser.",
+    ),
+    # When results must be released after a balance date. NZX: preliminary half-year and
+    # full-year announcements within 60 days (Listing Rule 3.5.1). ASX: Appendix 4D
+    # (half-year, LR 4.2A) and 4E (full-year, LR 4.3A) within 2 months; mining and
+    # early-stage issuers also lodge quarterly 4C/5B reports within 1 month (LR 4.7B, 5.5).
+    "results_deadline": Rule(
+        history=((date(2019, 1, 1), {"NZX": {"days": 60}, "ASX": {"months": 2},
+                                     "ASX_quarterly": {"months": 1}}),),
+        source="https://www.nzx.com/regulation/nzx-rules-guidance/nzx-listing-rules ; "
+               "https://www.asx.com.au/about/regulation/rules-guidance-notes-and-waivers/asx-listing-rules-guidance-notes-and-waivers",
+        note="Deadlines, not expected dates: many companies report earlier. An ASX issuer that lodges "
+             "its annual report first need not lodge a 4E. Check the current rules before relying on a date.",
     ),
     "settlement_days": Rule(
         history=((date(2014, 3, 7), 2),),
@@ -176,3 +188,16 @@ def trade_cost(amount: float, exchange: str, broker: str = "sharesies", home_cur
 
 def round_trip_pct(amount: float, exchange: str, broker: str = "sharesies", brokers: dict | None = None) -> float:
     return 2 * trade_cost(amount, exchange, broker, brokers=brokers) / amount if amount else 0.0
+
+
+def results_deadline(period_end: date, exchange: str, quarterly: bool = False, on: date | None = None) -> date:
+    """Latest date the listing rules allow for releasing results for a period."""
+    from .data import add_months  # local import: data imports nothing from here
+    r = rule("results_deadline", on or period_end)
+    ex = r["ASX_quarterly"] if quarterly else r.get(exchange.upper(), r["ASX"])
+    if "days" in ex:
+        return period_end + timedelta(days=ex["days"])
+    end = add_months(period_end, ex["months"])
+    if (period_end + timedelta(days=1)).day == 1:  # month-end balance date -> month-end deadline
+        end = add_months(end.replace(day=1), 1) - timedelta(days=1)
+    return end

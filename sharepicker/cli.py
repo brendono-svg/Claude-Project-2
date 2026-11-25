@@ -6,6 +6,8 @@
     python -m sharepicker backtest my-data/screen.yaml [-o my-data/backtest.md]
     python -m sharepicker watchlist my-data/holdings.yaml [-o my-data/watch.md]
     python -m sharepicker fetch my-data/screen.yaml FPH.NZ CBA.AX   # live Yahoo check
+    python -m sharepicker brief my-data/screen.yaml KAU.NZ [--for-claude] [-o brief.md]
+    python -m sharepicker digest my-data/screen.yaml [--save]
 """
 from __future__ import annotations
 
@@ -21,7 +23,9 @@ from .backtest import run_backtest
 from .data import YahooSource, open_source
 from .report import dumps, render_backtest, render_screen, render_watch, screen_json, why
 from .sample import generate
-from .screen import DEFAULT_BENCHMARKS, run_screen
+from .brief import Context, announcements_with_reactions, render_brief, render_digest, research_for
+from .research import ResearchStore, load_history, save_history
+from .screen import DEFAULT_BENCHMARKS, load_benchmarks, run_screen
 
 
 def load_config(path: str | None) -> dict:
@@ -73,6 +77,20 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--preset", help="Override weights: balanced, value, quality, income, momentum")
     sc.add_argument("--top", type=int)
     sc.add_argument("--as-of")
+    sc.add_argument("--save", action="store_true", help="Save this screen to the history folder (the tool's memory)")
+
+    br = sub.add_parser("brief", help="Research file for one share: checklist, thesis, results, announcements, sources")
+    br.add_argument("config")
+    br.add_argument("ticker")
+    br.add_argument("-o", "--output")
+    br.add_argument("--for-claude", action="store_true", help="Add a prompt to paste into Claude with the documents")
+    br.add_argument("--as-of")
+
+    dg = sub.add_parser("digest", help="What changed since the last saved screen")
+    dg.add_argument("config", nargs="?")
+    dg.add_argument("-o", "--output")
+    dg.add_argument("--save", action="store_true", help="Save today's screen to the history afterwards")
+    dg.add_argument("--as-of")
 
     ex = sub.add_parser("explain", help="Everything the screen knows about one share")
     ex.add_argument("config")
@@ -92,7 +110,23 @@ def main(argv: list[str] | None = None) -> int:
     fe.add_argument("config", nargs="?")
     fe.add_argument("tickers", nargs="+")
 
+    nt = sub.add_parser("note", help="Add a dated research note for a share")
+    nt.add_argument("config")
+    nt.add_argument("ticker")
+    nt.add_argument("text", nargs="+")
+
+    an = sub.add_parser("announce", help="Log an announcement you read on the NZX/ASX site")
+    an.add_argument("config")
+    an.add_argument("ticker")
+    an.add_argument("date", help="YYYY-MM-DD")
+    an.add_argument("headline")
+    an.add_argument("--url", default="")
+    an.add_argument("--sensitive", action="store_true", help="Marked price-sensitive")
+
     args = ap.parse_args(argv)
+
+    if args.cmd in ("note", "announce"):
+        return _capture(args)
 
     if args.cmd == "sample-data":
         p = generate(args.folder)
@@ -155,10 +189,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "explain":
         return _explain(res, args.ticker.upper(), float(cfg.get("marginal_tax_rate", 0.33)))
 
+    if args.cmd in ("brief", "digest", "screen"):
+        ctx, hist_dir = research_context(cfg, source, as_of)
+    if args.cmd == "brief":
+        md = render_brief(res, args.ticker, ctx, args.for_claude, float(cfg.get("marginal_tax_rate", 0.33)))
+        if md is None:
+            print(f"{args.ticker}: {res.excluded.get(args.ticker.upper(), 'not in the universe')}", file=sys.stderr)
+            return 1
+        _out(md, args.output)
+        return 0
+    if args.cmd == "digest":
+        _out(render_digest(res, ctx, hist_dir), args.output)
+        if args.save:
+            print(f"Saved {save_history(res, hist_dir)}", file=sys.stderr)
+        return 0
+
     top = args.top or int(cfg.get("top_n", 10))
     _out(render_screen(res, top, float(cfg.get("marginal_tax_rate", 0.33))), args.output)
     if args.json:
-        _out(dumps(screen_json(res)), args.json)
+        data = screen_json(res)
+        add_research_json(data, res, ctx)
+        _out(dumps(data), args.json)
+    if args.save:
+        print(f"Saved {save_history(res, hist_dir)}", file=sys.stderr)
     return 0
 
 
@@ -195,4 +248,70 @@ def _explain(res, ticker: str, rate: float) -> int:
               f"(NZ credits ${d['nz_credits']:.3f}, withholding ${d['withholding']:.3f}).")
     for kind, text in res.flags.get(lst.ticker, []):
         print(f"{'RED  ' if kind == 'red' else 'GREEN'} {text}")
+    return 0
+
+
+def research_context(cfg: dict, source, as_of: date) -> tuple[Context, str]:
+    d = cfg.get("data") or {}
+    r = cfg.get("research") or {}
+    folder = Path(d.get("folder", "my-data/sample"))
+    hist_dir = str(r.get("history_dir") or folder / "history")
+    store = ResearchStore(folder, r.get("journal"))
+    websites = {}
+    lp = folder / "listings.csv"
+    if lp.exists():
+        import csv
+        with lp.open(newline="", encoding="utf-8-sig") as fh:
+            websites = {row["ticker"]: row.get("website", "") for row in csv.DictReader(fh) if row.get("website")}
+    bench = load_benchmarks(source, {**DEFAULT_BENCHMARKS, **(cfg.get("benchmarks") or {})})
+    return Context(source, store, bench, load_history(hist_dir, before=as_of), websites), hist_dir
+
+
+def add_research_json(data: dict, res, ctx: Context) -> None:
+    """Checklist, next results and top announcements per share, for app/sharepicker.html."""
+    by = {r.ticker: r for r in res.ranked}
+    for sh in data["shares"]:
+        r = by[sh["ticker"]]
+        rs = research_for(r, res, ctx)
+        nr = rs["next_results"]
+        anns = announcements_with_reactions(ctx, r.ticker, r.snap.listing.exchange, res.as_of, days=180)
+        top = sorted(anns, key=lambda a: -a.relevance)[:4]
+        sh["research"] = {
+            "lenses": rs["lenses"],
+            "rules": rs["rules"],
+            "thesis": rs["journal"].thesis if rs["journal"] else None,
+            "next_results": {"date": nr["date"].isoformat(), "basis": nr["basis"]} if nr else None,
+            "announcements": [{"date": a.date.isoformat(), "label": a.label, "headline": a.headline,
+                               "url": a.url, "reaction": a.reaction} for a in sorted(top, key=lambda a: a.date, reverse=True)],
+        }
+
+
+def _capture(args) -> int:
+    import csv
+    cfg = load_config(args.config)
+    folder = Path((cfg.get("data") or {}).get("folder", "my-data/sample"))
+    t = args.ticker.upper()
+    if args.cmd == "note":
+        d = folder / "research" / t
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / f"{date.today().isoformat()}-notes.md"
+        new = not path.exists()
+        with path.open("a", encoding="utf-8") as fh:
+            if new:
+                fh.write(f"# {t} notes, {date.today():%d %B %Y}\n\n")
+            fh.write(f"- {' '.join(args.text)}\n")
+        print(f"Added to {path}")
+        return 0
+    from .research import classify
+    date.fromisoformat(args.date)   # validate
+    path = folder / "announcements.csv"
+    fields = ["date", "ticker", "headline", "url", "price_sensitive"]
+    new = not path.exists()
+    with path.open("a", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        if new:
+            w.writeheader()
+        w.writerow({"date": args.date, "ticker": t, "headline": args.headline, "url": args.url,
+                    "price_sensitive": 1 if args.sensitive else ""})
+    print(f"Logged in {path} as: {classify(args.headline)[0]}")
     return 0

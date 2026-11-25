@@ -14,8 +14,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from sharepicker.cli import add_research_json, research_context  # noqa: E402
 from sharepicker.data import CsvSource  # noqa: E402
-from sharepicker.report import screen_json  # noqa: E402
+from sharepicker.report import dumps, screen_json  # noqa: E402
 from sharepicker.sample import generate  # noqa: E402
 from sharepicker.screen import run_screen  # noqa: E402
 
@@ -34,8 +35,14 @@ def _round(o):
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
-        res = run_screen({}, CsvSource(generate(tmp)), AS_OF)
-        data = _round(screen_json(res))
+        folder = generate(tmp)
+        cfg = {"data": {"folder": str(folder)}}
+        src = CsvSource(folder)
+        res = run_screen(cfg, src, AS_OF)
+        data = screen_json(res)
+        ctx, _ = research_context(cfg, src, AS_OF)
+        add_research_json(data, res, ctx)
+        data = _round(json.loads(dumps(data)))
     data["source"] = "fictional sample data"
     blob = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     html_path = ROOT / "app" / "sharepicker.html"

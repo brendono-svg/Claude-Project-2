@@ -121,6 +121,60 @@ straight after `sample-data`.
   factor weights and watch the ranking change, filter (NZX/ASX, sector, no red flags, pays
   dividends, not FIF) and open any share for its full breakdown. "Try the fictional demo" works offline.
 
+### Research layer: results, announcements, your thesis
+
+Borrowing the useful parts of AI trading-bot designs (news relevance scoring, independent
+signals that must agree, risk rules, a memory of past runs) for long-term research rather than
+trading. Nothing here calls an API or places a trade: it reads files you keep, and builds links
+for you to open.
+
+```bash
+python -m sharepicker brief my-data/screen.yaml KAU.NZ                 # one-page research file
+python -m sharepicker brief my-data/screen.yaml KAU.NZ --for-claude    # + a prompt to paste into Claude
+python -m sharepicker screen my-data/screen.yaml --save                # save today's screen (the memory)
+python -m sharepicker digest my-data/screen.yaml --save                # what changed since last time
+python -m sharepicker announce my-data/screen.yaml FPH.NZ 2026-11-25 "Half-year result" --sensitive
+python -m sharepicker note my-data/screen.yaml FPH.NZ "Margins recovering; ask about US tariffs"
+```
+
+- **Research checklist.** Separate lenses shown side by side and never merged into a buy/sell
+  word: where the score ranks (top/middle/bottom third), whether *your* thesis still holds,
+  technical context (RSI, distance from the 200-day average, volume surges: not scored), the next
+  results date, short interest, recent important news, rank trend and red flags that keep coming back.
+- **Results calendar.** A confirmed date from `events.csv`, else an estimate from the company's
+  past release dates, else the listing-rule deadline: **60 days** after balance date on NZX
+  (Listing Rule 3.5.1), **2 months** on ASX (Appendix 4D/4E), 1 month for ASX quarterly 4C/5B
+  reports. Give each company a `balance_date` (e.g. `03-31`) in `listings.csv` if you have no
+  financials. The results card compares the latest year with the prior one, and shows how the
+  share price reacted to recent results.
+- **Announcements.** Each headline is sorted into a category (results, guidance raised or cut, capital raise,
+  takeover, trading halt, director trade, leadership change, ...) and given a relevance score, raised when
+  it was price-sensitive or moved the price. The price reaction is the share's return minus the
+  home index, from the close before the release to the close the day after, because a release
+  can come out before, during or after trading.
+- **Journal (`journal.yaml`).** Your thesis per share, a review date, and `break_if` rules such as
+  `dividend_cover < 1.2`, `roe < 10%`, `rank > 15`, `short_pct > 5%`. A typo is an error,
+  never a rule that silently never fires. `sample-data` writes an example.
+- **Memory.** `screen --save` stores a compact dated copy of the screen. `brief` shows the rank history,
+  and `digest` lists rank movers, new red flags, results due in 21 days, important
+  announcements since the last saved screen, and the state of every thesis.
+- **`--for-claude`** adds a prompt that sets out your thesis, the scores and recent news, and
+  asks for a summary of the result, bull and bear cases, the break rule closest to triggering, AGM
+  questions and NZ tax checks. It asks the assistant to quote its sources and gives no buy/sell advice. Paste it together with the
+  result documents from the primary-source links.
+
+| Research file (data folder) | Columns |
+|---|---|
+| `announcements.csv` | date, ticker, headline, url, price_sensitive (1/0/blank), category (optional override) |
+| `events.csv` | date, ticker, kind (results, quarterly, agm, ex_div, capital_raise, other), confirmed (1/0), note |
+| `shorts.csv` | date, ticker, short_pct (0-1). ASIC publishes ASX short positions daily |
+| `journal.yaml` | `shares: {TICKER: {thesis, added, review_by, break_if: [...], watch_for: [...]}}` |
+| `research/<TICKER>/*.md` | Your own notes (`note` adds to them) |
+| `listings.csv` extras | `balance_date` (MM-DD), `website` (investor centre link for briefs) |
+
+The phone app shows the checklist, thesis rules, next results date and key announcements for
+each share when the JSON comes from `screen --json`.
+
 ### How scoring works
 
 Each metric becomes a percentile (0-100) within the screened universe, with ties sharing a rank.
@@ -176,6 +230,7 @@ the related factors are skipped and the report says so.
 | `sharepicker/scoring.py` | Percentiles, sector blend, presets, composite and contributions |
 | `sharepicker/screen.py` | Universe filters, dual-listing merge, red and green flags |
 | `sharepicker/backtest.py`, `portfolio.py` | Monthly backtest; watchlist, FIF and satellite sizing |
+| `sharepicker/research.py`, `brief.py` | Announcements, results calendar, journal rules, history, checklist; `brief` and `digest` |
 | `sharepicker/report.py`, `cli.py`, `sample.py` | Markdown/JSON output, command line, fictional sample data |
 | `app/sharepicker.html` | Offline viewer with live re-weighting; `scripts/build_sharepicker_demo.py` refreshes its demo and `scripts/check_sharepicker_app.js` checks it matches Python |
 

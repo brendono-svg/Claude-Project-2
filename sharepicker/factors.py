@@ -146,6 +146,7 @@ def snapshot(listing: Listing, source: DataSource, as_of: date, fx: FX,
         m["momentum_12_1"] = (p1 / p12 - 1) if p1 and p12 else None
         year = px.window(as_of - timedelta(days=365), as_of)
         m["near_52w_high"] = price / max(year.values) if year.values else None
+        snap.facts.update(technicals(px))
         rets = monthly_returns(px, add_months(as_of, -36), as_of)
         if len(rets) >= 18:
             m["volatility"] = statistics.pstdev([r for _, r in rets]) * math.sqrt(12)
@@ -254,3 +255,30 @@ def _income(snap: Snapshot, source: DataSource, funds: list[Fundamentals], fx: F
         if fcf is not None and f.shares_out:
             m["fcf_cover"] = min((fcf / f.shares_out) / dps, 5.0)
     snap.facts["dividend_cover"] = m.get("dividend_cover")
+
+
+def technicals(px: Series) -> dict[str, float | None]:
+    """Context only, never scored: RSI(14), distance from 50/200-day averages, volume surge."""
+    v = px.values
+    out: dict[str, float | None] = {"rsi14": None, "vs_ma50": None, "vs_ma200": None, "volume_surge": None}
+    if len(v) >= 15:
+        gains = losses = 0.0
+        # Wilder's smoothing over the whole available history (last 250 days).
+        window = v[-251:]
+        diffs = [b - a for a, b in zip(window, window[1:])]
+        avg_g = sum(max(d, 0) for d in diffs[:14]) / 14
+        avg_l = sum(max(-d, 0) for d in diffs[:14]) / 14
+        for d in diffs[14:]:
+            avg_g = (avg_g * 13 + max(d, 0)) / 14
+            avg_l = (avg_l * 13 + max(-d, 0)) / 14
+        gains, losses = avg_g, avg_l
+        out["rsi14"] = 100.0 if losses == 0 else 100 - 100 / (1 + gains / losses)
+    if len(v) >= 50:
+        out["vs_ma50"] = v[-1] / (sum(v[-50:]) / 50) - 1
+    if len(v) >= 200:
+        out["vs_ma200"] = v[-1] / (sum(v[-200:]) / 200) - 1
+    vol = px.volumes
+    if len(vol) >= 120:
+        base = sum(vol[-120:]) / 120
+        out["volume_surge"] = (sum(vol[-5:]) / 5) / base if base else None
+    return out

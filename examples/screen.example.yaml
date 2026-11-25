@@ -25,6 +25,11 @@ filters:
 
 benchmarks: {NZX: ^NZ50, ASX: ^AXJO}
 
+# Research layer (brief, digest). Files live in data.folder; see README "Research layer".
+research:
+  # journal: my-data/journal.yaml        # default: <data folder>/journal.yaml
+  # history_dir: my-data/history         # where `screen --save` keeps past screens (default: <data folder>/history)
+
 backtest:
   top_n: 8
   capital_nzd: 50000
